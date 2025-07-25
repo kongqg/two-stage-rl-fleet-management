@@ -1,0 +1,10 @@
+[EP 015]  reward=10,577,499 response_rate=0.977334 total_orders=640796  remain_orders=14524 
+[EP 016]  reward=9,291,469 response_rate=0.852886 total_orders=640748  remain_orders=94263 
+[EP 017]  reward=9,754,084 response_rate=0.895229 total_orders=640714  remain_orders=67128 
+[EP 018]  reward=9,950,368 response_rate=0.915981 total_orders=640748  remain_orders=53835 
+[EP 019]  reward=9,584,719 response_rate=0.881926 total_orders=640914  remain_orders=75675 
+[EP 020]  reward=9,667,702 response_rate=0.893044 total_orders=639476  remain_orders=68396 
+[EP 021]  reward=8,595,128 response_rate=0.789349 total_orders=639461  remain_orders=134703 
+[EP 022]  reward=9,033,777 response_rate=0.828895 total_orders=641762  remain_orders=109809 
+[EP 023]  reward=10,692,681 response_rate=0.989014 total_orders=641260  remain_orders=7045 
+[EP 024]  reward=10,594,657 response_rate=0.978228 total_orders=640833  remain_orders=13952 

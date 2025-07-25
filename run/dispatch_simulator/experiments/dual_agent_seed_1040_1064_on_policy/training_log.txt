@@ -1,0 +1,26 @@
+[EP 000] reward=8566814.0 resp_rate=0.7782313328691982 total_orders=640618  remain_orders=142069 same-grid=71307  unserved=78907  
+[EP 001] reward=10217070.0 resp_rate=0.9404626351172186 total_orders=641110  remain_orders=38170 same-grid=65453  unserved=33980  
+[EP 002] reward=10195123.0 resp_rate=0.9350383448258656 total_orders=641286  remain_orders=41659 same-grid=51901  unserved=35702  
+[EP 003] reward=10048906.0 resp_rate=0.9213336035039045 total_orders=641570  remain_orders=50470 same-grid=57096  unserved=37934  
+[EP 004] reward=10536050.0 resp_rate=0.9684826851341928 total_orders=640981  remain_orders=20202 same-grid=44240  unserved=19544  
+[EP 005] reward=8722449.0 resp_rate=0.7984098242790325 total_orders=641187  remain_orders=129257 same-grid=49297  unserved=66827  
+[EP 006] reward=10491753.0 resp_rate=0.96177848451543 total_orders=641445  remain_orders=24517 same-grid=51291  unserved=23113  
+[EP 007] reward=9266951.0 resp_rate=0.849205333965655 total_orders=641024  remain_orders=96663 same-grid=49835  unserved=51450  
+[EP 008] reward=8634351.0 resp_rate=0.7893212172482523 total_orders=640691  remain_orders=134980 same-grid=46065  unserved=52803  
+[EP 009] reward=9342587.0 resp_rate=0.8571109657537775 total_orders=640567  remain_orders=91530 same-grid=52055  unserved=52239  
+[EP 010] reward=10404591.0 resp_rate=0.9548697879341181 total_orders=641876  remain_orders=28968 same-grid=55280  unserved=27459  
+[EP 011] reward=9706905.0 resp_rate=0.8888039627141229 total_orders=642388  remain_orders=71431 same-grid=53658  unserved=51163  
+[EP 012] reward=10319817.0 resp_rate=0.9453048941005675 total_orders=641977  remain_orders=35113 same-grid=50867  unserved=26807  
+[EP 013] reward=9729940.0 resp_rate=0.8921426776485939 total_orders=640689  remain_orders=69103 same-grid=56359  unserved=44609  
+[EP 014] reward=10459937.0 resp_rate=0.9607937002962732 total_orders=641300  remain_orders=25143 same-grid=50021  unserved=23329  
+[EP 015] reward=10207603.0 resp_rate=0.9354664712805842 total_orders=641465  remain_orders=41396 same-grid=56494  unserved=33628  
+[EP 016] reward=9932021.0 resp_rate=0.9096930790000437 total_orders=641468  remain_orders=57929 same-grid=63262  unserved=45647  
+[EP 017] reward=10237533.0 resp_rate=0.9373601476405214 total_orders=642642  remain_orders=40255 same-grid=52642  unserved=33649  
+[EP 018] reward=9277319.0 resp_rate=0.8503304739136549 total_orders=639990  remain_orders=95787 same-grid=41595  unserved=51684  
+[EP 019] reward=10800860.0 resp_rate=0.9949158091674463 total_orders=641400  remain_orders=3261 same-grid=16148  unserved=3064  
+[EP 020] reward=9883675.0 resp_rate=0.9071402336576407 total_orders=639825  remain_orders=59414 same-grid=56295  unserved=44240  
+[EP 021] reward=10669259.0 resp_rate=0.9838477998215036 total_orders=639789  remain_orders=10334 same-grid=29310  unserved=10104  
+[EP 022] reward=9694762.0 resp_rate=0.887473387977206 total_orders=642097  remain_orders=72253 same-grid=53064  unserved=51876  
+[EP 023] reward=10676097.0 resp_rate=0.9820683714535839 total_orders=640823  remain_orders=11491 same-grid=34149  unserved=10924  
+[EP 024] reward=8707322.0 resp_rate=0.7966224581120567 total_orders=641354  remain_orders=130437 same-grid=42277  unserved=59779  
+即 0.9185（约 91.85%）。

@@ -1,0 +1,1 @@
+[EP 024]  reward=10,714,009 response_rate=0.986887 total_orders=640833  remain_orders=8403 same-grid=17855  unserved=8123  eps=0.500

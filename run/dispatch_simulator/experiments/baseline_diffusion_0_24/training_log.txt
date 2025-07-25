@@ -1,0 +1,10 @@
+[EP 15/15] Total GMV: 7295739.00 | Response Rate: 0.6207 | Total Orders: 640796 | Served: 397712
+[EP 16/16] Total GMV: 5705032.00 | Response Rate: 0.4553 | Total Orders: 640748 | Served: 291763
+[EP 17/17] Total GMV: 6149506.00 | Response Rate: 0.4997 | Total Orders: 640714 | Served: 320168
+[EP 18/18] Total GMV: 6210282.00 | Response Rate: 0.5065 | Total Orders: 640748 | Served: 324562
+[EP 19/19] Total GMV: 5878963.00 | Response Rate: 0.4748 | Total Orders: 640914 | Served: 304314
+[EP 20/20] Total GMV: 5940609.00 | Response Rate: 0.4818 | Total Orders: 639476 | Served: 308107
+[EP 21/21] Total GMV: 5495786.00 | Response Rate: 0.4359 | Total Orders: 639461 | Served: 278729
+[EP 22/22] Total GMV: 5305633.00 | Response Rate: 0.4156 | Total Orders: 641762 | Served: 266732
+[EP 23/23] Total GMV: 7138762.00 | Response Rate: 0.6034 | Total Orders: 641260 | Served: 386958
+[EP 24/24] Total GMV: 7047593.00 | Response Rate: 0.5945 | Total Orders: 640833 | Served: 380999

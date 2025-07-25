@@ -1,0 +1,1 @@
+[EP 020]  reward=9,667,702 response_rate=0.893044 total_orders=639476  remain_orders=68396 

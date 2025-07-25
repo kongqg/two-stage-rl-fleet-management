@@ -1,0 +1,28 @@
+[EP 000]  reward=8,550,306 response_rate=0.776552 total_orders=640618  remain_orders=143145 same-grid=68979  unserved=78669  eps=0.500
+[EP 001]  reward=10,239,981 response_rate=0.943640 total_orders=641110  remain_orders=36133 same-grid=56603  unserved=31141  eps=0.500
+[EP 002]  reward=10,016,049 response_rate=0.918567 total_orders=641286  remain_orders=52222 same-grid=49982  unserved=42202  eps=0.500
+[EP 003]  reward=10,053,205 response_rate=0.922219 total_orders=641570  remain_orders=49902 same-grid=50423  unserved=38095  eps=0.500
+[EP 004]  reward=10,560,568 response_rate=0.970609 total_orders=640981  remain_orders=18839 same-grid=33175  unserved=17149  eps=0.500
+[EP 005]  reward=8,848,122 response_rate=0.810055 total_orders=641187  remain_orders=121790 same-grid=44304  unserved=64899  eps=0.500
+[EP 006]  reward=10,464,659 response_rate=0.959141 total_orders=641445  remain_orders=26209 same-grid=44059  unserved=24385  eps=0.500
+[EP 007]  reward=9,216,665 response_rate=0.844748 total_orders=641024  remain_orders=99520 same-grid=45952  unserved=52517  eps=0.500
+[EP 008]  reward=8,598,833 response_rate=0.786131 total_orders=640691  remain_orders=137024 same-grid=44035  unserved=53557  eps=0.500
+[EP 009]  reward=9,312,770 response_rate=0.854644 total_orders=640567  remain_orders=93110 same-grid=48915  unserved=53531  eps=0.500
+[EP 010]  reward=10,389,876 response_rate=0.953345 total_orders=641876  remain_orders=29947 same-grid=40818  unserved=24785  eps=0.500
+[EP 011]  reward=9,646,907 response_rate=0.883572 total_orders=642388  remain_orders=74792 same-grid=52084  unserved=52881  eps=0.500
+[EP 012]  reward=10,366,071 response_rate=0.949849 total_orders=641977  remain_orders=32196 same-grid=52953  unserved=29011  eps=0.500
+[EP 013]  reward=9,785,511 response_rate=0.897028 total_orders=640689  remain_orders=65973 same-grid=53952  unserved=44814  eps=0.500
+[EP 014]  reward=10,481,835 response_rate=0.963108 total_orders=641300  remain_orders=23659 same-grid=45761  unserved=21850  eps=0.500
+[EP 015]  reward=10,142,391 response_rate=0.929348 total_orders=641465  remain_orders=45321 same-grid=56457  unserved=37022  eps=0.500
+[EP 016]  reward=9,896,170 response_rate=0.906103 total_orders=641468  remain_orders=60232 same-grid=60683  unserved=46048  eps=0.500
+[EP 017]  reward=10,180,856 response_rate=0.932099 total_orders=642642  remain_orders=43636 same-grid=49374  unserved=36157  eps=0.500
+[EP 018]  reward=9,337,000 response_rate=0.855426 total_orders=639990  remain_orders=92526 same-grid=42299  unserved=52174  eps=0.500
+[EP 019]  reward=10,807,937 response_rate=0.995868 total_orders=641400  remain_orders=2650 same-grid=12621  unserved=2450  eps=0.500
+[EP 020]  reward=9,791,691 response_rate=0.898533 total_orders=639825  remain_orders=64921 same-grid=52650  unserved=45999  eps=0.500
+[EP 021]  reward=10,663,768 response_rate=0.983310 total_orders=639789  remain_orders=10678 same-grid=27600  unserved=10447  eps=0.500
+[EP 022]  reward=9,724,895 response_rate=0.890073 total_orders=642097  remain_orders=70584 same-grid=51040  unserved=51043  eps=0.500
+[EP 023]  reward=10,668,298 response_rate=0.981327 total_orders=640823  remain_orders=11966 same-grid=29225  unserved=11727  eps=0.500
+[EP 024]  reward=8,715,799 response_rate=0.797566 total_orders=641354  remain_orders=129832 same-grid=37602  unserved=56676  eps=0.500
+
+
+ 0.9170（91.70%）。

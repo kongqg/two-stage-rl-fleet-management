@@ -1,0 +1,1 @@
+[EP 024]  reward=8,477,509 response_rate=0.776718 total_orders=641354  remain_orders=143203 

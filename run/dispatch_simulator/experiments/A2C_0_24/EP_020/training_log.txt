@@ -1,0 +1,1 @@
+[EP 020]  reward=9,979,656 response_rate=0.919317 total_orders=639476  remain_orders=51595 same-grid=48317  unserved=41539  eps=0.500

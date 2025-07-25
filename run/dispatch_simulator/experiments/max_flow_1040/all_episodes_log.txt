@@ -1,0 +1,12 @@
+Episode 15 -> GMV: 10,213,333.00, ORR: 0.9355 Orders_num:641465
+Episode 16 -> GMV: 9,919,778.00, ORR: 0.9068 Orders_num:641468
+Episode 17 -> GMV: 10,281,329.00, ORR: 0.9402 Orders_num:642642
+Episode 18 -> GMV: 9,247,948.00, ORR: 0.8444 Orders_num:639990
+Episode 19 -> GMV: 10,844,798.00, ORR: 0.9989 Orders_num:641400
+Episode 20 -> GMV: 9,874,720.00, ORR: 0.9053 Orders_num:639825
+Episode 21 -> GMV: 10,687,135.00, ORR: 0.9856 Orders_num:639789
+Episode 22 -> GMV: 9,747,282.00, ORR: 0.8906 Orders_num:642097
+Episode 23 -> GMV: 10,718,172.00, ORR: 0.9862 Orders_num:640823
+Episode 24 -> GMV: 8,819,433.00, ORR: 0.8016 Orders_num:641354
+
+--- Final Results (Averaged over all episodes) --- Mean GMV: 10,035,392.80 Mean Order Response Rate: 0.9195 Standard Deviation of ORR: 0.0605
