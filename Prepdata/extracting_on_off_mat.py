@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-生成 onoff_driver_location_mat.pkl
-    shape: (144,  G,  2)   # G = 有效网格数
-步骤：
-    1. 读 mapped_matrix_int.pkl => rows, cols
-    2. 扫描 2016-11 驾驶员轨迹（tar.gz 内部 CSV）
-    3. 按 10-min × node 计算空闲司机数
-    4. 对每日做 Δ(t)=idle(t)−idle(t−1)，再跨日统计 μ/σ
+Generate onoff_driver_location_mat.pkl
+Shape: (144, G, 2) where G = number of valid grids
+
+Steps:
+Read mapped_matrix_int.pkl → get rows, cols
+Scan driver trajectories from November 2016 (CSV files inside .tar.gz)
+Count the number of idle drivers per 10-minute × grid node
+For each day, compute Δ(t) = idle(t) − idle(t−1), then compute μ (mean) and σ (std) across days
 """
 import os, tarfile, math, pickle, sys
 from glob import glob
@@ -33,13 +34,13 @@ def load_mapped_matrix() -> Tuple[np.ndarray, float, float]:
     rows, cols     = mat.shape
     grid_size_lat  = (latitude_range[1]  - latitude_range[0]) / rows
     grid_size_lon  = (longitude_range[1] - longitude_range[0]) / cols
-    print(f"🗺  网格: {rows}×{cols}={rows*cols}, "
+    print(f"网格: {rows}×{cols}={rows*cols}, "
           f"lat_step={grid_size_lat:.6f}°, lon_step={grid_size_lon:.6f}°")
     return mat, grid_size_lat, grid_size_lon
 
 
 def read_one_tar(tar_path: str) -> pd.DataFrame:
-    """提取 tar.gz 内第一张 csv"""
+    """Extract the first CSV file inside the tar.gz archive."""
     with tarfile.open(tar_path, "r:gz") as tar:
         member = next(m for m in tar.getmembers() if m.name.endswith(".csv"))
         with tar.extractfile(member) as f:
@@ -63,7 +64,7 @@ def compute_idle_mat_for_one_day(
     node2col = {nid: i for i, nid in enumerate(valid_nodes)}
     idle_mat = np.zeros((144, len(valid_nodes)), dtype=int)
 
-    # 计算订单区间
+    # Calculate the order time interval.
     interval_df = (
         df.groupby(['司机ID', '订单ID'])['gps_time']
           .agg(start='min', end='max')
@@ -72,7 +73,7 @@ def compute_idle_mat_for_one_day(
     day0 = interval_df['start'].dt.floor('D').iloc[0]
     bins = pd.date_range(day0, periods=145, freq=RESAMPLE_FREQ)
 
-    # 对每个司机
+    # For each driver
     for drv_id, drv_traj in df.groupby('司机ID'):
         busy = np.zeros(144, bool)
         for _, row in interval_df[interval_df['司机ID'] == drv_id].iterrows():

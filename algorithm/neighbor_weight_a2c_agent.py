@@ -1,4 +1,6 @@
+import random
 import sys
+from collections import deque
 
 import numpy as np
 import torch
@@ -7,7 +9,7 @@ import torch.nn.functional as F
 
 __all__ = [
     "WeightPolicyNet", "NeighborStateProcessor",
-    "NeighborReplay", "NeighborAgentW"
+    "Stage2ActorReplay", "NeighborAgentW","Stage2ValueReplay"
 ]
 # ─────────────── 网络 ────────────────
 class WeightPolicyNet(nn.Module):
@@ -16,23 +18,27 @@ class WeightPolicyNet(nn.Module):
         self.l1 = nn.Linear(state_dim, 128)
         self.l2 = nn.Linear(128, 64)
         self.l3 = nn.Linear(64, 32)
-        self.logits = nn.Linear(32, action_dim)
+        self.out = nn.Linear(32, action_dim)
 
-        # Xavier 初始化
         for m in self.modules():
             if isinstance(m, nn.Linear):
-                # 根据输入和输出维度自动计算一个合适的分布区间
                 nn.init.xavier_uniform_(m.weight)
-                # 将每个线性层的偏置向量初始化为全零，保证在训练一开始时，偏置对激活输出没有额外偏倚。
                 nn.init.zeros_(m.bias)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def features(self, x):
         x = F.relu(self.l1(x))
         x = F.relu(self.l2(x))
         x = F.relu(self.l3(x))
-        # softmax 做完再 clip，避免 0/1
-        p = torch.softmax(self.logits(x), dim=1)
-        return torch.clamp(p, 1e-6, 1.0 - 1e-6)
+        return x
+
+
+    def logits(self, x):
+        h = self.features(x)
+        return self.out(h)
+
+    def forward(self, x):
+        logits = self.logits(x)
+        return torch.softmax(logits, dim=-1)
 
 class ValueNet(nn.Module):
     def __init__(self, state_dim):
@@ -45,54 +51,52 @@ class ValueNet(nn.Module):
         x = F.relu(self.l1(x))
         x = F.relu(self.l2(x))
         x = F.relu(self.l3(x))
-        # return torch.tanh(self.out(x)) * 10
-        return torch.relu(self.out(x))
+        return self.out(x)
 class NeighborStateProcessor:
-    """
-    state =
-        [remain_orders_i           (N)
-         idle_neighbors_i1..ik     (N*K)
-         sg_t , ud_t , sg_{t-1}, ud_{t-1}, ...]  (2*hist_len)
-    """
     def __init__(self, env, n_neighbors: int = 6, hist_len: int = 3):
         self.env  = env
         self.n    = env.n_valid_grids
         self.k    = n_neighbors
         self.hist_len = hist_len
         self._hist = []
-        self.SCALE = 20.0            # 用于归一化订单数 / 空车数
+        self.SCALE = 20.0            # Normalizing order counts / idle vehicle counts
+        self.HIST_SCALE = 500
 
-    def get_state(self,
-                  remain_vec: np.ndarray,
-                  idle_snap: dict,
-                  conflict_step: tuple) -> np.ndarray:
+    # 新增
+    def get_state_for_source(self, s_id_node, remain_vec, idle_snap, conflict_step):
+        # remain_vec: G 维 pending
+        # Neighbor Idle: Take 6 neighbors of s_id (fill with 0 if invalid).
+        nb_ids = []
+        nb_idle_driver = []
+        for neigh in s_id_node.neighbors:  # 可能有 None
+            if neigh is None:
+                nb_ids.append(-1)
+                nb_idle_driver.append(0)
+            else:
+                nid = neigh.get_node_index()
+                nb_ids.append(nid)
+                nb_idle_driver.append(idle_snap.get(nid, 0))
+        nb = np.asarray(nb_idle_driver, np.float32) / self.SCALE
 
-        # ①  邻居 idle  (N,K)
-        nb_mat = np.zeros((self.n, self.k), np.float32)
-        for i in range(self.n):
-            for j, nb_node_id in enumerate(self.env.valid_neighbor_node_id[i][:self.k]):
-                nb_mat[i, j] = idle_snap.get(nb_node_id, 0)
-
-        # 归一化
-        remain_vec = remain_vec.astype(np.float32) / self.SCALE
-        nb_mat     = nb_mat / self.SCALE
-
-        # ②  冲突历史
         self._hist.append(conflict_step)
         if len(self._hist) > self.hist_len:
             self._hist.pop(0)
-        hist_arr = np.array(
-            ([(0, 0)] * (self.hist_len - len(self._hist)) + self._hist),
-            np.float32
-        ).flatten()
 
+        hist_padded = [0.0] * (self.hist_len - len(self._hist)) + self._hist
+        hist_arr = np.asarray(hist_padded, dtype=np.float32) / self.HIST_SCALE
+        e_s = np.zeros(self.n, np.float32);
+        e_s[s_id_node.get_node_index()] = 1.0
 
-        # ③  拼接
-        return np.concatenate((remain_vec,  # remain_vec:(5796,)
-                               nb_mat.flatten(), # nb_mat:(40572,)
-                               hist_arr)) # hist_arr:(6,)
+        return np.concatenate([remain_vec.astype(np.float32) / self.SCALE,
+                               nb, hist_arr, e_s])
 
-
+def _grad_global_norm(module) -> float:
+    total = 0.0
+    for p in module.parameters():
+        if p.grad is not None:
+            g = p.grad.detach()
+            total += float(g.norm(2).item() ** 2)
+    return total ** 0.5
 # ─────────────── Agent ────────────────
 class NeighborAgentW:
     def __init__(self, state_dim, action_dim=6, lr=1e-4,
@@ -108,102 +112,155 @@ class NeighborAgentW:
         from collections import defaultdict
         self.metrics = defaultdict(list)  # {name: [v1,v2,...]}
 
-    # -------- 行为 --------
+    def masked_softmax(self,logits, mask):
+        # Mask: 6 dimensions {0/1}
+        logits = logits + (mask == 0) * (-1e9)
+        return torch.softmax(logits, dim=-1)
     @torch.no_grad()
-    def action(self, s_np, eps=0.0):
-        s_t = torch.from_numpy(s_np).float().unsqueeze(0).to(self.device)
-        w_pred = self.actor(s_t).squeeze(0)      # (6,)
-        w = w_pred.clone()
-        if np.random.rand() < eps:               # ε‑greedy (Dirichlet noise)
-            noise = torch.from_numpy(np.random.dirichlet(np.ones(6)).astype(np.float32)).to(self.device)
-            w = 0.5 * w + 0.5 * noise
-            w = w / w.sum()
-        return w.cpu().numpy()
+    def action(self, state_s_np, mask_np, eps=0.0, select='argmax'):
+        # 1020
+        s = torch.from_numpy(state_s_np).float().unsqueeze(0).to(self.device)
+        logits = self.actor.logits(s)
+        mask = torch.from_numpy(mask_np).to(self.device)  # 6 维
+        prob = self.masked_softmax(logits, mask).squeeze(0)
+        if np.random.rand() < eps:
+            prob = 0.5 * prob + 0.5 * torch.from_numpy(np.random.dirichlet(np.ones(6))).to(prob)
+            prob = prob / prob.sum()
+        if select == 'argmax':
+            order = torch.argsort(prob, descending=True).cpu().numpy().tolist()
+        else:
+            order = torch.multinomial(prob, num_samples=6, replacement=False).cpu().numpy().tolist()
+        return prob.cpu().numpy(), order
 
-    # -------- 更新 --------
-    def update(self,
-               s_np: np.ndarray,
-               w_np: np.ndarray,
-               r_np: np.ndarray,
-               s_next_np: np.ndarray,
-               gamma: float = 0.95):
+    def update_value(self, states, rewards, next_states, gamma=0.95):
+        """Critic；(s, r, s') -> MSE[ r + γV(s') - V(s) ]"""
+        s = torch.from_numpy(states).float().to(self.device)  # [B, D]
+        ns = torch.from_numpy(next_states).float().to(self.device)  # [B, D]
+        r = torch.from_numpy(rewards).float().to(self.device)  # [B]
 
-        s      = torch.from_numpy(s_np).float().to(self.device)
-        w_true = torch.from_numpy(w_np).float().to(self.device)
-        r = torch.from_numpy(r_np / 1000.0).float().to(self.device)
-        s_next = torch.from_numpy(s_next_np).float().to(self.device)
-        # logp_b = torch.from_numpy(logp_beh_np).float().to(self.device)
-
-        # ---------- Critic ----------
-        v      = self.critic(s).squeeze(1)
+        v = self.critic(s).squeeze(-1)
         with torch.no_grad():
-            v_next = self.critic(s_next).squeeze(1)
-        # td = torch.clamp(r + gamma * v_next - v, -10.0, 10.0)
-        td = torch.clamp(r + gamma * v_next - v, -50.0, 50.0)
-        loss_c = td.pow(2).mean()
-        self.opt_c.zero_grad()
+            v_next = self.critic(ns).squeeze(-1)
+
+        td = r + gamma * v_next - v
+        loss_c = (td ** 2).mean()
+
+        self.opt_c.zero_grad(set_to_none=True)
         loss_c.backward()
-        grad_norm_c = torch.nn.utils.clip_grad_norm_(self.critic.parameters(), 2.0)
+        if hasattr(self, "grad_clip") and self.grad_clip is not None:
+            torch.nn.utils.clip_grad_norm_(self.critic.parameters(), self.grad_clip)
+
         self.opt_c.step()
 
-        # ---------- Actor (IS) ----------
-        # 归一化 w_true
-        w_true = torch.clamp(w_true / (w_true.sum(1, keepdim=True) + 1e-8), 0.0, 1.0)
-        # p = self.actor(s)
-        # logp_t  = (w_true * torch.log(p)).sum(1)  # 目标策略 logπ_tgt
-        # rho = torch.exp(logp_t - logp_b)
-        # if self.rho_max > 0:
-        #     rho = torch.clamp(rho, 0.0, self.rho_max)
-        # adv = td.detach()
-        # entropy = -(w_true * torch.log(p)).sum(1).mean()
-        # loss_a = -(rho * logp_t * adv).mean() - 0.01 * entropy
+        return loss_c
+    def update_policy(self, states, attempts, masks, rewards, next_states,
+                      gamma=0.95, beta=0.01):
+        """
+        Actor; Advantage = r + γV(s') - V(s)
+        """
+        eps = 1e-8
+        s  = torch.from_numpy(states).float().to(self.device)
+        ns = torch.from_numpy(next_states).float().to(self.device)
+        r  = torch.from_numpy(rewards).float().to(self.device)
 
+        with torch.no_grad():
+            v      = self.critic(s).squeeze(-1)
+            v_next = self.critic(ns).squeeze(-1)
+            adv    = r + gamma * v_next - v  # [B]
+            adv = adv * 2.0
 
+        logliks, entropies, lens = [], [], []
+        B = s.size(0)
+        for i in range(B):
+            s_i = s[i:i+1]                       # [1, D]
+            seq = attempts[i]                    # List[int]
+            ms  = masks[i]                       # List[np.ndarray(6,)]
+            lens.append(len(seq))
 
-        # ---------- Actor (On-Policy A2C) ----------
-        p = self.actor(s)
-        logp_t = (w_true * torch.log(p)).sum(1)
-        adv = td.detach()
-        entropy = -(w_true * torch.log(p)).sum(1).mean()
-        # 去掉 IS，直接用 on-policy 策略梯度
-        loss_a = -(logp_t * adv).mean() - 0.01 * entropy
+            if len(seq) == 0:
+                logliks.append(torch.tensor(0.0, device=self.device))
+                entropies.append(torch.tensor(0.0, device=self.device))
+                continue
 
+            loglik_i, entropy_i = 0.0, 0.0
+            for t, a_t in enumerate(seq):
+                logits_t = self.actor.logits(s_i)                  # [1,6]
+                mask_t_np = ms[t]
+                mask_t = (torch.from_numpy(mask_t_np).float().to(self.device)
+                          if not isinstance(mask_t_np, torch.Tensor)
+                          else mask_t_np.float().to(self.device))
+                mask_t = mask_t.unsqueeze(0)                       # [1,6]
+                masked_logits = logits_t + (mask_t == 0).float() * (-1e9)
+                prob_t = torch.softmax(masked_logits, dim=-1)      # [1,6]
+                p_at  = prob_t[0, int(a_t)]
+                loglik_i  = loglik_i + torch.log(p_at + eps)
+                entropy_i = entropy_i - (prob_t * torch.log(prob_t + eps)).sum(dim=-1).squeeze(0)
+            logliks.append(loglik_i)
+            entropies.append(entropy_i)
 
+        logliks   = torch.stack(logliks,   dim=0)  # [B]
+        entropies = torch.stack(entropies, dim=0)  # [B]
+        loss_a = -(adv * logliks).mean() - beta * entropies.mean()
 
-        self.opt_a.zero_grad();
-        loss_a.backward();
-        grad_norm_a = torch.nn.utils.clip_grad_norm_(self.actor.parameters(), 2.0)
+        self.opt_a.zero_grad(set_to_none=True)
+        loss_a.backward()
+
+        if hasattr(self, "grad_clip") and self.grad_clip is not None:
+            torch.nn.utils.clip_grad_norm_(self.actor.parameters(), self.grad_clip)
+
         self.opt_a.step()
-
-        self.metrics["loss_actor"].append(loss_a.item())
-        self.metrics["loss_critic"].append(loss_c.item())
-        self.metrics["grad_actor"].append(grad_norm_a.item())
-        self.metrics["grad_critic"].append(grad_norm_c.item())
-        self.metrics["value_mean"].append(v.mean().item())
-
-        return (loss_a.item(), loss_c.item(),
-                grad_norm_a.item(), grad_norm_c.item(),
-                v.mean().item())
+        return loss_a
 
 
-class NeighborReplay:
-    def __init__(self, cap: int, batch: int, state_dim: int, action_dim: int = 6):
-        self.cap, self.batch = int(cap), int(batch)
-        self.ptr = self.size = 0
-        self.s   = np.zeros((cap, state_dim),  np.float32)
-        self.w   = np.zeros((cap, action_dim), np.float32)
-        self.r   = np.zeros((cap,),            np.float32)
-        self.ns  = np.zeros((cap, state_dim),  np.float32)
+class Stage2ActorReplay:
+    def __init__(self, capacity: int = 200_000):
+        self.buf = deque(maxlen=capacity)
 
-    def add(self, s, w, r, ns):
-        idx = self.ptr
-        self.s[idx], self.w[idx], self.r[idx], self.ns[idx] = (
-            s, w, r, ns)
-        self.ptr  = (self.ptr + 1) % self.cap
-        self.size = min(self.size + 1, self.cap)
+    def __len__(self):
+        return len(self.buf)
 
-    def sample(self):
-        k   = min(self.batch, self.size)
-        idx = np.random.randint(0, self.size, size=k)
-        return (self.s[idx], self.w[idx], self.r[idx],
-                self.ns[idx])
+    def add(self, state_s, attempts, masks_seq, reward_s, next_state_s):
+        state_s      = np.asarray(state_s, dtype=np.float32)
+        next_state_s = np.asarray(next_state_s, dtype=np.float32)
+        # masks 每步都是 shape=(6,) 的 0/1
+        masks_seq = [np.asarray(m, dtype=np.int64).reshape(6) for m in masks_seq]
+        attempts  = [int(a) for a in attempts]
+        reward_s  = float(reward_s)
+        self.buf.append((state_s, attempts, masks_seq, reward_s, next_state_s))
+
+    def sample(self, batch_size: int):
+        batch = random.sample(self.buf, k=min(batch_size, len(self.buf)))
+        states, attempts, masks, rewards, next_states = [], [], [], [], []
+        for s, aseq, mseq, r, ns in batch:
+            states.append(s)
+            attempts.append(aseq)
+            masks.append(mseq)
+            rewards.append(r)
+            next_states.append(ns)
+        return (np.stack(states, axis=0).astype(np.float32),   # [B, D2]
+                attempts,                                      # List[List[int]] (变长)
+                masks,                                         # List[List[np.ndarray(6)]]
+                np.asarray(rewards, dtype=np.float32),         # [B]
+                np.stack(next_states, axis=0).astype(np.float32))  # [B, D2]
+
+
+class Stage2ValueReplay:
+    def __init__(self, capacity: int = 200_000):
+        from collections import deque
+        self.buf = deque(maxlen=capacity)
+
+    def __len__(self):
+        return len(self.buf)
+
+    def add(self, state_s, reward_s, next_state_s):
+        state_s      = np.asarray(state_s, dtype=np.float32)
+        reward_s     = float(reward_s)
+        next_state_s = np.asarray(next_state_s, dtype=np.float32)
+        self.buf.append((state_s, reward_s, next_state_s))
+
+    def sample(self, batch_size: int):
+        batch = random.sample(self.buf, k=min(batch_size, len(self.buf)))
+        s, r, ns = zip(*batch)
+        return (np.stack(s,  axis=0).astype(np.float32),
+                np.asarray(r, dtype=np.float32),
+                np.stack(ns, axis=0).astype(np.float32))

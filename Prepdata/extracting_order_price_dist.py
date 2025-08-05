@@ -1,10 +1,11 @@
 # build_order_price_dist_month.py  ★请直接覆盖原文件★
 # =========================================================
 """
-扫 2016-11 全月订单，生成 15×2 的 price μ/σ：
-  • 每 10-min 为一层 (L_MAX = 15)
-  • 每层 ≥ MIN_CNT（默认 30）才计入；否则 μ=σ=0
-  • 先做 5–95% 分位截断，去掉离群高价
+Scan all orders from November 2016 to generate a 15×2 price matrix of μ/σ:
+• Each 10-minute slot forms one layer (`L_MAX = 15`)
+• A layer is included only if it contains ≥ `MIN_CNT` entries (default 30); otherwise, set μ = σ = 0
+• Apply 5–95% percentile truncation first to remove outlier prices.
+
 """
 import os, glob, tarfile, math, pickle, sys
 import numpy as np
@@ -17,9 +18,9 @@ OUTPUT_PKL     = "real_datasets/order_price_dist.pkl"
 
 TIME_INTERVAL  = 10   # min
 L_MAX          = 9
-MIN_CNT        = 30   # 每层最少样本；不足则视为噪声
+MIN_CNT        = 30
 
-# —— 成都计价参数（与单日脚本保持一致） ——————————
+# —— Chengdu pricing parameters (consistent with the single-day script) ——————————
 DAY_START, DAY_END      = 6, 23
 BASE_FARE_DAY,  PER_KM_DAY  = 8.0, 1.9
 BASE_FARE_NIGHT, PER_KM_NIGHT = 8.0, 2.2
@@ -34,7 +35,7 @@ REQ_COLS = [
 
 # ─────────── 工具函数 ─────────────────────────────────────
 def calc_price(dist_km: float, start_time) -> float:
-    """估算理论车费（保持原公式）"""
+    """Estimate the theoretical fare (using the original formula)."""
     h = start_time.hour + start_time.minute/60.0
     if DAY_START <= h < DAY_END:                       # 白天
         if dist_km <= BASE_DIST:
@@ -54,7 +55,7 @@ def calc_price(dist_km: float, start_time) -> float:
                 + (dist_km-10)*PER_KM_NIGHT*RETURN_SURCHARGE)
 
 def read_one(path: str) -> pd.DataFrame:
-    """读取 csv / tar.gz → DataFrame(REQ_COLS)"""
+    """load csv / tar.gz → DataFrame(REQ_COLS)"""
     if path.endswith(".csv"):
         return pd.read_csv(path, usecols=REQ_COLS)
     if path.endswith((".tar.gz", ".tgz")):
@@ -80,11 +81,11 @@ def process_df(df: pd.DataFrame, buckets: List[list]) -> None:
     a = np.sin(dlat/2)**2 + np.cos(lat1)*np.cos(lat2)*np.sin(dlon/2)**2
     dist_km = 2*EARTH_R*np.arcsin(np.sqrt(a))
 
-    # 估算价格（价格公式本身快，直接 apply）
+    # Estimate the price (the pricing formula is fast, apply it directly).
     tmp = pd.DataFrame({'dist_km':dist_km,'start_time':start,'end_time':end})
     tmp['price'] = tmp.apply(lambda r: calc_price(r.dist_km, r.start_time), axis=1)
 
-    # 层编号
+    # Layer index
     dur_min = (tmp['end_time']-tmp['start_time']).dt.total_seconds()/60.0
     layers  = np.ceil(dur_min/TIME_INTERVAL).astype(int)
     valid   = (layers>=1)&(layers<=L_MAX)
@@ -110,28 +111,27 @@ def main():
         except Exception as e:
             print(f"⚠️  跳过（{e}）")
 
-    # —— 计算 μ/σ with trimming & MIN_CNT ——
+    # —— Compute μ/σ with trimming and `MIN_CNT` threshold. ——
     stats = np.zeros((L_MAX,2), np.float32)
     for i, arr in enumerate(buckets):
         n = len(arr)
         if n < MIN_CNT:
-            # 样本太少，视为噪声
+            # If the sample size is too small, treat it as noise.
             stats[i] = 0.0
             continue
         v = np.asarray(arr, dtype=float)
-        # 5–95% 分位截断
+        # 5–95% percentile truncation
         lo, hi = np.percentile(v, 5), np.percentile(v, 95)
         v = v[(v>=lo)&(v<=hi)]
         stats[i,0] = v.mean()
         stats[i,1] = v.std(ddof=0)
 
-    # 保存
+    # save
     os.makedirs(os.path.dirname(OUTPUT_PKL), exist_ok=True)
     with open(OUTPUT_PKL,'wb') as f:
         pickle.dump(stats, f)
     print(f"\n✅ price μ/σ 已保存 → {OUTPUT_PKL} (shape={stats.shape})\n")
 
-    # 打印检查
     print("Layer | Dur |  mean |  std | n_raw")
     for i,(μ,σ) in enumerate(stats,start=1):
         print(f"{i:5d} | {i*TIME_INTERVAL:3d}m | {μ:6.2f} | {σ:6.2f} | {len(buckets[i-1])}")

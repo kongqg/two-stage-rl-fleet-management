@@ -1,3 +1,4 @@
+import sys
 from abc import ABCMeta, abstractmethod
 from simulator.utilities import *
 
@@ -297,13 +298,7 @@ class Node(object):
 
         return reward, all_order_num, finished_order_num
 
-    def simple_order_assign_broadcast_update(self, city, neighbor_node_reward):
-        """
-        给定一个待分配的 node，尝试向其邻居借车派单，
-        并按以下规则统计：
-          • same_grid_contention：最初有车却被前面抢光后，最终被其它邻居补上的数量
-          • unserved_demand：所有邻居都空车导致仍无法补齐的订单数
-        """
+    def simple_order_assign_broadcast_update(self, city, neighbor_node_reward, neighbor_vec = False):
         assert self.idle_driver_num == 0
         reward = 0
         num_finished_orders = 0
@@ -358,9 +353,10 @@ class Node(object):
         served_idx = np.arange(num_finished_orders)
         self.orders = [o for j, o in enumerate(self.orders) if j not in served_idx]
         self.order_num = len(self.orders)
-
-        return reward, num_finished_orders
-
+        if neighbor_vec:
+            return reward, num_finished_orders, neighbor_node_reward
+        else:
+            return reward, num_finished_orders
     def utility_assign_orders_neighbor(self, city, neighbor_node, num_assigned_order):
 
         served_order_index = []

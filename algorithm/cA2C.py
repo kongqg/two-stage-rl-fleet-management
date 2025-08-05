@@ -1,8 +1,3 @@
-import sys
-
-import numpy as np
-import tensorflow as tf
-
 import random, os
 from algorithm.alg_utility import *
 from copy import deepcopy
@@ -165,8 +160,9 @@ class Estimator:
 
         grid_ids = np.argmax(s[:, -self.n_valid_grid:], axis=1)
 
+
         # compute neighbor mask according to centralized value
-        curr_neighbor_mask = deepcopy(self.valid_action_mask)
+        curr_neighbor_mask = deepcopy(self.valid_action_mask) # shape: G * 7
         for idx, grid_valid_idx in enumerate(grid_ids):
             valid_qvalues = value_output[self.neighbors_list[grid_valid_idx]]  # value of current and its nearby grids
             temp_qvalue = np.zeros(self.action_dim)
@@ -223,7 +219,6 @@ class Estimator:
         advantage = []
         node_reward = node_reward.flatten()
         qvalue_next = self.sess.run(self.value_output, {self.state: next_state}).flatten()
-
         for idx, next_state_id in enumerate(next_state_ids):
             next_state_id = int(next_state_id)
             temp_adv = node_reward[next_state_id] + gamma * qvalue_next[next_state_id] - curr_state_value[idx]
@@ -250,21 +245,27 @@ class Estimator:
         _, value_loss = sess.run([self.value_train_op, self.value_loss], feed_dict)
         return value_loss
 
-    def update_policy(self, policy_state, advantage, action_choosen_mat, curr_neighbor_mask, learning_rate, global_step):
+    def update_policy(self, policy_state, advantage, action_choosen_mat, curr_neighbor_mask, learning_rate, global_step,log_every=100):
         sess = self.sess
-        feed_dict = {self.policy_state: policy_state,
-                     self.adv: advantage,
-                     self.ACTION: action_choosen_mat,
-                     self.neighbor_mask: curr_neighbor_mask,
-                     self.loss_lr: learning_rate}
-        summaries, _, loss = sess.run([self.policy_summaries, self.policy_train_op, self.policy_loss], feed_dict)
+        feed = {self.policy_state: policy_state,
+                self.adv: advantage,
+                self.ACTION: action_choosen_mat,
+                self.neighbor_mask: curr_neighbor_mask,
+                self.loss_lr: learning_rate}
 
-        if self.summary_writer:
-            self.summary_writer.add_summary(summaries, global_step)
-            self.summary_writer.flush()
-        return loss
+        _, ploss, ent = sess.run([self.policy_train_op,
+                                  self.policy_loss,
+                                  self.entropy], feed)
 
-    def update_value(self, s, y, learning_rate, global_step):
+        if global_step % log_every == 0:
+            adv_pos = (advantage > 0).mean() * 100
+            print(f"[A1/P] step {global_step:6d}  "
+                  f"loss={ploss:7.4f}  ent={ent:5.3f}  "
+                  f"adv_pos%={adv_pos:4.1f}")
+
+        return ploss
+
+    def update_value(self, s, y, learning_rate, global_step,log_every = 100):
         """
         Updates the estimator towards the given targets.
 
@@ -278,11 +279,13 @@ class Estimator:
         """
         sess = self.sess
         feed_dict = {self.state: s, self.y_pl: y, self.loss_lr: learning_rate}
-        summaries, _, loss = sess.run([self.summaries, self.value_train_op, self.value_loss], feed_dict)
-
-        if self.summary_writer:
-            self.summary_writer.add_summary(summaries, global_step)
-            self.summary_writer.flush()
+        # summaries, _, loss = sess.run([self.summaries, self.value_train_op, self.value_loss], feed_dict)
+        v_pred, _ = sess.run([self.value_output, self.value_train_op], feed_dict)
+        td_abs = np.mean(np.abs(y - v_pred))
+        loss = np.mean((y - v_pred) ** 2)
+        if global_step % log_every == 0:
+            print(f"[A1/V] step {global_step:6d}  loss={loss:7.4f}  "
+                  f"td_abs={td_abs:7.4f}")
         return loss
 
 
@@ -358,7 +361,7 @@ class stateProcessor:
         time_one_hot = np.zeros((T))
         time_one_hot[curr_city_time % T] = 1
         onehot_grid_id = np.eye(self.n_valid_grids)
-
+        # G * (G * 3 + T)
         s_grid = np.zeros((self.n_valid_grids, self.n_valid_grids * 3 + T))
         s_grid[:, :self.n_valid_grids * 2] = np.stack([curr_s] * self.n_valid_grids)
         s_grid[:, self.n_valid_grids * 2:self.n_valid_grids * 2 + T] = np.stack([time_one_hot] * self.n_valid_grids)
@@ -496,34 +499,3 @@ class ReplayMemory:
         self.next_states = []
         self.curr_lens = 0
 
-
-
-class ModelParametersCopier():
-    """
-    Copy model parameters of one estimator to another.
-    """
-
-    def __init__(self, estimator1, estimator2):
-        """
-        Defines copy-work operation graph.
-        Args:
-          estimator1: Estimator to copy the paramters from
-          estimator2: Estimator to copy the parameters to
-        """
-        e1_params = [t for t in tf.compat.v1.trainable_variables() if t.name.startswith(estimator1.scope)]
-        e1_params = sorted(e1_params, key=lambda v: v.name)
-        e2_params = [t for t in tf.compat.v1.trainable_variables() if t.name.startswith(estimator2.scope)]
-        e2_params = sorted(e2_params, key=lambda v: v.name)
-
-        self.update_ops = []
-        for e1_v, e2_v in zip(e1_params, e2_params):
-            op = e2_v.assign(e1_v)
-            self.update_ops.append(op)
-
-    def make(self, sess):
-        """
-        Makes copy.
-        Args:
-            sess: Tensorflow session instance
-        """
-        sess.run(self.update_ops)

@@ -1,11 +1,17 @@
 # conflict_metrics.py
+"""
+1. Same-Neighbor Fill-In Conflict (`same_grid_contention_step`)
+   *Definition:* The number of orders for which a neighbor originally had idle vehicles, but those vehicles were exhausted by earlier requests—forcing these orders to be fulfilled by other neighbors.
+
+2. Total Conflict (`unserved_demand_step`)
+   *Definition:* The total number of orders that remain unassigned after all neighbor requests have failed.
+"""
 class ConflictMetrics:
-    """统一管理冲突指标（同邻居抢占 & 无邻居可补）"""
 
     def __init__(self):
         # step-level
-        self.same_grid_contention_step = 0   # 同邻居竞争
-        self.unserved_demand_step      = 0   # 所有邻居皆无车
+        self.same_grid_contention_step = 0
+        self.unserved_demand_step      = 0
         # accumulated
         self.same_grid_contention_total = 0
         self.unserved_demand_total      = 0
@@ -28,9 +34,9 @@ class ConflictMetrics:
 
     # ---------- 读取 ----------
     def get_step(self):
-        """返回 (same_grid_contention_step, unserved_demand_step)"""
+        """ (same_grid_contention_step, unserved_demand_step)"""
         return self.same_grid_contention_step, self.unserved_demand_step
 
     def get_total(self):
-        """返回 (same_grid_contention_total, unserved_demand_total)"""
+        """ (same_grid_contention_total, unserved_demand_total)"""
         return self.same_grid_contention_total, self.unserved_demand_total

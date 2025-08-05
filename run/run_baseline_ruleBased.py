@@ -1,10 +1,9 @@
 # -*- coding: utf-8 -*-
 """
 Rule-based Baseline:
-- 在每个决策点，对于有空闲司机的网格，会根据其邻居网格在当前时段的“历史平均订单量”
-  构建一个概率分布。
-- 历史订单量越高的邻居，被选为目的地的概率也越高。
-- 相比 Diffusion 的纯随机，这是一个有目的、趋利性的启发式策略。
+    At each decision point, for a grid cell with an idle driver,
+    a probability distribution is built based on the "historical average order volume" of its neighboring grid cells for the current time period.
+    The neighbor with a higher historical order volume has a higher probability of being selected as the destination.
 """
 from __future__ import annotations
 import os
@@ -16,14 +15,13 @@ import numpy as np
 
 
 
-# ---------- 日志目录 & 文件 ----------
 out_dir = f"dispatch_simulator/experiments/baseline_rule_based_{time.strftime('%Y%m%d_%H%M')}"
 os.makedirs(out_dir, exist_ok=True)
 log_path = os.path.join(out_dir, "training_log.txt")
 with open(log_path, "w") as f:
     f.write("")
 
-# ============ 数据加载 ============
+# ============ Data Loading ============
 data_dir = "../real_datasets/"
 
 load = lambda name: pickle.load(open(os.path.join(data_dir, name), "rb"))
@@ -36,7 +34,7 @@ order_real = load("order_real.pkl")
 order_time = load("order_time_dist.pkl")
 order_price = load("order_price_dist.pkl")
 
-# ============ 构造环境 ============
+# ============ Constructing the environment ============
 from simulator.envs import CityReal
 
 M, N = mapped_matrix_int.shape
@@ -49,10 +47,10 @@ env = CityReal(mapped_matrix_int, order_num_dist,
                onoff_driver_location_mat=onoff_driver_location)
 print("CityReal ready – valid grids:", env.n_valid_grids)
 
-# ============ 训练超参 ============
-EP_LEN = 144  # 一天 144 个 10-min slot
+# ============ Training Hyperparameters ============
+EP_LEN = 144  # 144 10-minute slots in a day.
 
-# ============ 主循环 ============
+# ============ Main loop ============
 print("\n========== Running Rule-based Baseline ==========")
 for ep in range(15,25):
     # --- 环境重置 ---
@@ -89,7 +87,7 @@ for ep in range(15,25):
             neighbor_node_objects = env.nodes[node_id].neighbors
             neighbor_ids = [n for n in neighbor_node_objects if n is not None]
 
-            if not neighbor_ids:  # 如果过滤后没有有效邻居，则跳过
+            if not neighbor_ids:  # If there are no valid neighbors after filtering, then skip.
                 continue
             neighbor_ids = [n.get_node_index() for n in neighbor_ids]
             action_options = [node_id] + neighbor_ids
@@ -102,15 +100,16 @@ for ep in range(15,25):
             probabilities = np.array(weights, dtype=np.float32)
             probabilities /= np.sum(probabilities)
 
-            # 为该网格的所有司机做决策，并汇总结果
-            # 使用一个字典来统计从当前node_id出发，到各个目的地的司机数量
+            # Make decisions for all drivers in this grid and aggregate the results.
+            #
+            # Use a dictionary to count the number of drivers from the current node_id to each destination.
             dispatch_counts = {}  # key: destination_id, value: count
             for _ in range(idle_drivers_count):
                 chosen_destination = np.random.choice(action_options, p=probabilities)
                 if chosen_destination != node_id:
                     dispatch_counts[chosen_destination] = dispatch_counts.get(chosen_destination, 0) + 1
 
-            # 将汇总后的决策加入到最终的指令列表中
+            # Add the aggregated decisions to the final instruction list.
             for dest, num in dispatch_counts.items():
                 dispatch_commands.append([node_id, dest, num])
 
@@ -126,7 +125,7 @@ for ep in range(15,25):
         env.step_bootstrap_order_real(env.day_orders[moment])
         env.step_driver_online_offline_nodewise()
         env.step_remove_unfinished_orders()
-    # ==== 日志 ====
+    # ==== log ====
     resp_rate = env.episode_finished_orders / env.episode_total_orders if env.episode_total_orders > 0 else 0
     log_str = (f"[EP {ep:02d}/{ep}] "
                f"Total GMV: {env.episode_reward:.2f} | "
@@ -137,5 +136,5 @@ for ep in range(15,25):
     with open(log_path, "a") as f:
         f.write(log_str + "\n")
 
-print("\nRule-based baseline run finished ✅")
+print("\nRule-based baseline run finished")
 print(f"Log file saved to: {log_path}")

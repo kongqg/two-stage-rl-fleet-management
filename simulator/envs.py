@@ -7,13 +7,8 @@ sys.path.append("../")
 from simulator.objects import *
 from simulator.utilities import *
 from simulator.conflict_metrics import ConflictMetrics
+import numpy as np
 
-# from algorithm import *
-
-# current_time = time.strftime("%Y%m%d_%H-%M")
-# log_dir = "/nfs/private/linkaixiang_i/data/dispatch_simulator/experiments/"+current_time + "/"
-# mkdir_p(log_dir)
-# logging.basicConfig(filename=log_dir +'logger_env.log', level=logging.INFO)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -135,7 +130,7 @@ class CityReal:
         self._dispatch_buf = []  # 保存 (dest_node_id, driver_id)
 
     def reset_episode_metrics(self):
-        """在每个新 Ep 开始时调用，清零所有 Episode 指标"""
+        """Call at the beginning of each new episode to reset all episode-level metrics."""
         self.episode_reward = 0.0
         self.episode_total_orders = 0
         self.episode_finished_orders = 0
@@ -441,7 +436,7 @@ class CityReal:
         # historical idle driver distribution
         idle_driver_distribution = self.idle_driver_location_mat[self.city_time % int(self.n_intervals), :]
 
-        # ——— 对齐两者长度，避免广播错误 ———
+        # ——— Align the lengths of both to prevent broadcasting errors. ———
         if idle_driver_distribution.shape[0] != curr_idle_driver_distribution_resort.shape[0]:
             idle_driver_distribution = idle_driver_distribution[:curr_idle_driver_distribution_resort.shape[0]]
 
@@ -475,9 +470,9 @@ class CityReal:
         index_sampled_orders = np.where(np.random.binomial(1, self.p, num_all_orders) == 1)[0]
         one_day_orders = [self.real_orders[i] for i in index_sampled_orders]
 
-        print(f"generate_order=1时，进行1/28比例之后的订单采样数量：{len(one_day_orders)}")
+        print(f"When generate_order = 1, the number of sampled orders after applying the {self.p} ratio:{len(one_day_orders)}")
 
-        self.out_grid_in_orders = np.zeros((int(self.n_intervals), len(self.target_grids)))
+        self.out_grid_in_orders = np.zeros((int(self.n_intervals), len(self.target_grids))) # 144,504
 
         day_orders = [[] for _ in np.arange(self.n_intervals)]
         for iorder in one_day_orders:
@@ -498,7 +493,6 @@ class CityReal:
 
             day_orders[start_time].append([start_node, end_node, start_time, duration, price])
 
-        # 打印整天的总订单数量
         self.day_orders = day_orders
         self.episode_total_orders = sum(len(slot) for slot in self.day_orders)
 
@@ -645,15 +639,15 @@ class CityReal:
         """
 
         node_reward = np.zeros((len(self.nodes)))
-        # neighbor_reward = np.zeros((len(self.nodes)))
+        neighbor_reward = np.zeros((len(self.nodes)))
         # First round broadcast
         reward = 0  # R_{t+1}
         all_order_num = 0
         finished_order_num = 0
 
-        print(f"[t={self.city_time:03d}] 本时段产生订单数：{len(self.day_orders[self.city_time])}")
+        print(f"[t={self.city_time:03d}] time orders:{len(self.day_orders[self.city_time])}")
         idle_drivers = self.get_num_idle_drivers()
-        print(f"[t={self.city_time:03d}] 空闲司机总数：{idle_drivers}")
+        print(f"[t={self.city_time:03d}] idle drivers: {idle_drivers}")
         finished_order_num_node1 = 0
         for node in self.nodes:
             if node is not None:
@@ -666,44 +660,40 @@ class CityReal:
                 finished_order_num += finished_order_num_node
                 node_reward[node.get_node_index()] += reward_node
 
-        print(f"第一轮派单完成数量:{finished_order_num_node1}")
-        # 记录广播开始前的邻居空车快照
-        # self.neighbor_idle_snapshot = {
-        #     node.get_node_index(): node.idle_driver_num
-        #     for node in self.nodes if node is not None
-        # }
-        # # 重置 step 级别的冲突计数
-        # self.metrics.reset_step()
-        # # Second round broadcast
-        # finished_order_num_node_broadcast1 = 0
-        #
-        # for node in self.nodes:
-        #     if node is not None:
-        #         if node.order_num != 0:
-        #             reward_node_broadcast, finished_order_num_node_broadcast \
-        #                 = node.simple_order_assign_broadcast_update(self, neighbor_reward)
-        #             finished_order_num_node_broadcast1 += finished_order_num_node_broadcast
-        #             reward += reward_node_broadcast
-        #             self.episode_reward += reward_node_broadcast
-        #             finished_order_num += finished_order_num_node_broadcast
-        #
-        # print(f"第二轮派单完成数量:{finished_order_num_node_broadcast1}")
-        #
-        # node_reward = node_reward + neighbor_reward
-        node_reward = node_reward
+        print(f"first round finished orders:{finished_order_num_node1}")
+        # Record a snapshot of neighbor idle vehicles before broadcasting begins.
+        self.neighbor_idle_snapshot = {
+            node.get_node_index(): node.idle_driver_num
+            for node in self.nodes if node is not None
+        }
+        # Reset step-level conflict counters.
+        self.metrics.reset_step()
+        # Second round broadcast
+        finished_order_num_node_broadcast1 = 0
+        before_order_num_node = 0
+
+        for node in self.nodes:
+            if node is not None:
+                if node.order_num != 0:
+                    before_order_num_node += node.order_num
+                    reward_node_broadcast, finished_order_num_node_broadcast \
+                        = node.simple_order_assign_broadcast_update(self, neighbor_reward)
+                    finished_order_num_node_broadcast1 += finished_order_num_node_broadcast
+                    reward += reward_node_broadcast
+                    self.episode_reward += reward_node_broadcast
+                    finished_order_num += finished_order_num_node_broadcast
+        print(f"second round finished orders:{finished_order_num_node_broadcast1}")
+        node_reward = node_reward + neighbor_reward
         if all_order_num != 0:
             self.order_response_rate = finished_order_num / float(all_order_num)
         else:
             self.order_response_rate = -1
 
         self.episode_finished_orders += finished_order_num
-        # sg_s, ud_s = self.metrics.same_grid_contention_step, self.metrics.unserved_demand_step
-        # print(f"[metric] step {self.city_time:03d}: "
-        #       f"same_grid_contention={sg_s}, unserved_demand={ud_s}")
-
-
-        # return reward, [node_reward, neighbor_reward]
-        return reward, [node_reward]
+        sg_s, ud_s = self.metrics.same_grid_contention_step, self.metrics.unserved_demand_step
+        print(f"[metric] step {self.city_time:03d}: "
+              f"same_grid_contention={sg_s}, unserved_demand={ud_s}")
+        return reward, [node_reward, neighbor_reward]
     def step_remove_unfinished_orders(self):
         for node in self.nodes:
             if node is not None:
@@ -802,7 +792,6 @@ class CityReal:
 
     def step(self, dispatch_actions, generate_order=1): # action: [source, destination, nums]
         info = []
-        print(f"dispatch_actions:{dispatch_actions}")
 
         '''**************************** T = 1 ****************************'''
         # Loop over all dispatch action, change the driver distribution
@@ -832,39 +821,38 @@ class CityReal:
         self.step_remove_unfinished_orders()
         # get states S_{t+1}  [driver_dist, order_dist]
         next_state = self.get_observation()
-        print(f"next_state:{next_state.shape}")
-        sys.exit()
         context = self.step_pre_order_assigin(next_state)
         info = [reward_node, context]
         return next_state, reward, info
 
     def step_stage1(self, action_tuple, epsilon=0.0,return_node_gmv: bool = False):
         """
-        第 1 阶段：
-          • 若提供 estimator+stateProcessor，则调用 Agent-1 产生调度动作并实际移动司机
-          • 之后每个网格各自 simple_order_assign_real()
-        返回:
-          reward_local : float
-          pending_nodes: List[int]  — 仍有未完成订单的网格 id
+            Stage 1:
+
+            If both `estimator` and `stateProcessor` are provided, Agent-1 is called to generate dispatch actions and actually move the drivers.
+            fter that, each grid independently runs `simple_order_assign_real()`.
+
+            Returns:
+
+            reward_local`: *float* — local reward for this stage
+            pending_nodes`: List[int] — list of grid IDs that still have unassigned orders
+
         """
         reward_local = 0.0
         node_gmv_vec = np.zeros(self.M * self.N, dtype=np.float32)
         total_local_finished = 0
         pending_nodes = []
-        # print(f"[t={self.city_time:03d}] 本时段产生订单数：{len(self.day_orders[self.city_time])}")
-        # idle_drivers = self.get_num_idle_drivers()
-        # print(f"[t={self.city_time:03d}] 空闲司机总数：{idle_drivers}")
 
-        # ---------- ① (可选) 调度司机 ----------
-        if action_tuple:  # 真正移动司机
+        # ---------- ① Dispatch drivers ----------
+        if action_tuple:
             save_remove_id = self.step_dispatch_invalid(action_tuple)
-            # 暂存在缓冲区，下一时间步回收
+            # Temporarily store in buffer and reclaim in the next time step.
             self._dispatch_buf.extend(save_remove_id)
 
-        print(f"[t={self.city_time:03d}] 本时段产生订单数：{len(self.day_orders[self.city_time])}")
+        print(f"[t={self.city_time:03d}] time orders:{len(self.day_orders[self.city_time])}")
         idle_drivers = self.get_num_idle_drivers()
-        print(f"[t={self.city_time:03d}] 空闲司机总数：{idle_drivers}")
-        # ---------- ② 本格子自己接单 ----------
+        print(f"[t={self.city_time:03d}] idle drivers: {idle_drivers}")
+        # ---------- ② This grid handles its own orders. ----------
         for node in self.nodes:
             if node is None: continue
             r_loc, _, fin = node.simple_order_assign_real(self.city_time, self)
@@ -873,30 +861,47 @@ class CityReal:
             node_gmv_vec[node.get_node_index()] += r_loc
             if node.order_num > 0:
                 pending_nodes.append(node.get_node_index())
-        print(f"== 本轮完成汇总 == local_total finished = {total_local_finished}")
+        print(f"== local_total finished = {total_local_finished}")
 
-        # ---------- ③ 保存邻居空车快照 ----------
+        # ---------- ③ Save a snapshot of neighbor idle vehicles. ----------
         self.neighbor_idle_snapshot = {
             node.get_node_index(): node.idle_driver_num
             for node in self.nodes if node is not None
         }
 
-        # 第一段的reward的累加
+        # Accumulation of rewards from the first stage.
         self.episode_reward += reward_local
-        # 第一轮完成的订单数量
+        # Number of orders completed in the first round.
         self.episode_finished_orders += total_local_finished
         if return_node_gmv:
             return reward_local, pending_nodes, node_gmv_vec
         else:
             return reward_local, pending_nodes
 
-    def step_stage2_weight_plus(self, pending_nodes, weights_mat,return_node_gmv: bool = False):
-
+    def step_stage2_weight_plus(
+            self,
+            pending_nodes,
+            weights_mat,
+            select_mode: str = 'argmax',
+            return_node_gmv: bool = False,
+            return_traces: bool = True,
+            return_next_state: bool = True
+    ):
         reward_total, finished_total = 0.0, 0
-        node_gmv_vec2 = np.zeros(self.M * self.N, dtype=np.float32)
+        G = self.M * self.N
+        node_gmv_vec2 = np.zeros(G, dtype=np.float32)
+
+        # Used for measurement and masking.
+        traces = {}  # {s_id: {'attempts':[j...], 'masks':[mask6_at_t,...]}}
         self.metrics.reset_step()
         num_finished_orders = 0
-        idle_init = dict(self.neighbor_idle_snapshot)  # 广播开始前的邻居 idle
+
+        # Record neighbor idle states at the start of Stage-2 (for conflict statistics).
+        idle_init = dict(self.neighbor_idle_snapshot)
+
+
+
+        # ---------- Main loop: iterate over each source grid.  ----------
         for node_id, w in zip(pending_nodes, weights_mat):
             node = self.nodes[node_id]
             pending0 = int(node.order_num)
@@ -904,199 +909,198 @@ class CityReal:
             if remain == 0:
                 continue
 
-            # ---------- 1. 选邻居并排序 ----------
-            neigh_ids = self.valid_neighbor_node_id[self.target_grids.index(node_id)]
-            # (6,)
-            idle_vec = np.array(
-                [self.nodes[n].idle_driver_num for n in neigh_ids[:6]], dtype=np.int64
-            )
-            # (6,)
-            # score = idle_vec * w[:6]
-            score = idle_vec * w
-            order = np.argsort(-score)  # 邻居排序，idle×weight 降序
+            # === 1) Fetch the **aligned** 6-neighbor indices (consistent with the weight dimensions). ===
+            neigh_ids = []
+            for neigh in node.neighbors:
+                neigh_ids.append(neigh.get_node_index()) # 长度6，可能含 -1
 
-            total_shortage_init = 0  # baseline 用
-            taken_cnt = {int(n): 0 for n in neigh_ids[:6]}  # 记录借走量
 
-            # ---------- 2. 第一轮：排序扫描 ----------
-            for j in order:
+            # Construct `idle_vec` and initial mask `mask0` (set to 0 for invalid or no-vehicle neighbors).
+            idle_vec = np.zeros(6, dtype=np.int64)
+            mask0 = np.zeros(6, dtype=np.int64)
+            for j in range(6):
+                nid = neigh_ids[j]
+                if nid == -1:
+                    idle_vec[j] = 0
+                    mask0[j] = 0
+                else:
+                    avail = int(self.nodes[nid].idle_driver_num)
+                    idle_vec[j] = avail
+                    mask0[j] = 1 if avail > 0 else 0
+
+            # === 2) Compute attempt order. ===
+            #`argmax`: Sort by `idle * weight`;
+            #`sample`: Sample **without replacement** from the support set defined by the mask, weighted by `weight`.
+
+            if select_mode == 'argmax':
+                score = idle_vec * w
+                order_all = np.argsort(-score).tolist()
+            else:
+                # Perform normalized sampling **without replacement** from `w`, constrained by the `mask`, to generate a sequence.
+                p = np.array(w, dtype=np.float64) * mask0
+                s = p.sum()
+                if s <= 0:
+                    order_all = [i for i in range(6)]  # 退化：随便一个顺序
+                else:
+                    p = p / s
+                    order_all = []
+                    mask_tmp = mask0.copy()
+                    for _ in range(6):
+                        # Sample only from the remaining candidates.
+                        p_tmp = p * mask_tmp
+                        st = p_tmp.sum()
+                        if st <= 1e-12:
+                            break
+                        p_tmp = p_tmp / st
+                        j = int(np.random.choice(6, p=p_tmp))
+                        order_all.append(j)
+                        mask_tmp[j] = 0
+
+            # === 3) Attempt neighbors one by one (record mask and selection; stop early if successful). ===
+            attempts = []  # a_{s,1:m}
+            masks_per_step = []  # R_{s,t}，
+            taken_cnt = {int(nid): 0 for nid in neigh_ids if nid != -1}
+
+            total_shortage_init = 0  # baseline conflict
+            visited = np.zeros(6, dtype=np.int8)
+
+            for j in order_all:
+                # At each step, construct the current candidate mask: **valid** + not yet visited + still has vehicles.
+                mask_t = np.zeros(6, dtype=np.int64)
+                for k in range(6):
+                    nid_k = neigh_ids[k]
+                    if nid_k == -1 or visited[k]:
+                        mask_t[k] = 0
+                    else:
+                        avail_k = int(self.nodes[nid_k].idle_driver_num)
+                        mask_t[k] = 1 if avail_k > 0 else 0
+                if mask_t.sum() == 0:
+                    break
+                # Record the candidate mask.
+                masks_per_step.append(mask_t.copy())
+
+                # If neighbor `j` is no longer selectable (no vehicles / invalid / already visited), skip it.
+                if mask_t[j] == 0:
+                    visited[j] = 1
+                    continue
+
+                # Execute the attempt.
                 neigh_id = neigh_ids[j]
                 neigh = self.nodes[neigh_id]
-                if neigh is None:
-                    continue
                 avail = int(neigh.idle_driver_num)
-                if avail == 0:
-                    continue
-
                 need = remain
                 given = min(need, avail)
 
-                # 如果 需求大于 空车 那么产生空缺
                 short = need - given
-
-
-                # 这里只有当 初始 idle_init.get(neigh_id, 0) > 0 代表有车的时候，才会走下面这一步
                 if short > 0 and idle_init.get(neigh_id, 0) > 0:
                     total_shortage_init += short
 
                 if given > 0:
-                    rr = node.utility_assign_orders_neighbor(self, neigh, given)  # 返回该批 GMV
+                    rr = node.utility_assign_orders_neighbor(self, neigh, given)
                     reward_total += rr
                     node_gmv_vec2[node_id] += rr
                     num_finished_orders += given
-
-                    # 第二轮派单reward - 第一轮 按照权重取车
                     remain -= given
                     taken_cnt[int(neigh_id)] += given
+
+                # Record the selected neighbor index (relative to the 6-dimensional order).
+                attempts.append(int(j))
+                visited[j] = 1
 
                 if remain == 0:
                     break
 
 
-            # ---------- 3. 第二轮：原顺序再次贪心 ----------
-            if remain > 0:
-                rr2, finished2 = node.simple_order_assign_broadcast_update(
-                    self,  # city 实例
-                    node_gmv_vec2  # ← 传入用来累加 GMV 的向量
-                )
-                reward_total += rr2
-                num_finished_orders += finished2
-                # simple_order_assign_broadcast_update 已经自己删掉 node.orders 中已完成的单
-                remain = node.order_num
-
-                # ---------- 4. 计算真实 same-grid 抢车量 ----------
+            # === 5)  Conflict statistics. ===
             excess_sum = 0
             for nid, taken in taken_cnt.items():
                 excess_sum += max(0, taken - idle_init.get(nid, 0))
 
-            # ---------- 5. 写冲突指标 ----------
-            if remain == 0:  # 全部补齐
+            if remain == 0:
                 if excess_sum:
                     self.metrics.add_same_grid_contention(excess_sum)
             else:
-
-                # 如果一开始邻居都没车，那么total_shortage_init == 0，那么conflict也只会加 0
-                conflicts_add = min(remain, total_shortage_init)  # baseline 方式
+                conflicts_add = min(remain, total_shortage_init)
                 samegrid_add = max(0, excess_sum - conflicts_add)
                 if samegrid_add:
                     self.metrics.add_same_grid_contention(samegrid_add)
                 if conflicts_add:
                     self.metrics.add_unserved_demand(conflicts_add)
-                # 余下 (remain - conflicts_add) 照 baseline 口径忽略
 
-        print(f"== 本轮完成汇总 == neighbor finished = {num_finished_orders}")
+            if return_traces:
+                traces[node_id] = {
+                    "attempts": attempts,  # [j1, j2, ...] 相对 6 维
+                    "masks": masks_per_step,  # [mask6_at_t, ...] 二值
+                    "neigh_ids": neigh_ids  # 如需从 6 维映射回真实 grid id
+                }
+
+        print(f"== neighbor finished = {num_finished_orders}")
         self.episode_reward += reward_total
-            # 第二轮完成的订单数量
         self.episode_finished_orders += num_finished_orders
 
+        # Global pending orders after Stage-2
+        p_next = None
+        if return_next_state:
+            p_next = np.array([self.nodes[g].order_num for g in range(G)], dtype=np.int32)
+
+        if return_traces and return_next_state and return_node_gmv:
+            return reward_total, node_gmv_vec2, traces, p_next
+        if return_traces and return_next_state:
+            return reward_total, traces, p_next
         if return_node_gmv:
             return reward_total, node_gmv_vec2
-        else:
-            return reward_total
-
+        return reward_total
 
     def step_finish_interval(self,
                              inject_next_orders: bool = False):
         """
-        • ① 司机调度到达 → 回到目的地并变 idle
-        • ② 服务中的司机检查是否完单
-        • ③ （可选）注入 t+1 的订单
-        • ④ （可选）根据统计分布做司机上下线
-        • ⑤ 清理超时未服务订单
+        * Drivers finish dispatch, return to destinations, and become idle
+        * Check if drivers currently serving have completed orders
+        * (Optional) Inject orders for time t+1
+        * (Optional) Manage driver online/offline status based on statistical distributions
+        * Clear orders that have timed out without service
+
         """
         self.step_driver_status_control()
-        # ---------- ① 调度司机到达 ----------
+        # ---------- Dispatch drivers to their destinations. ----------
         if self._dispatch_buf:
             self.step_add_dispatched_drivers(self._dispatch_buf)
             self._dispatch_buf = []
 
 
-        # ---------- ③ 注入下一步订单 ----------
+        # ----------  Inject orders for the next time step. ----------
         if inject_next_orders:
-            moment = int(self.city_time % self.n_intervals)  # **注意：此时 city_time 已在外层 +1**
+            moment = int(self.city_time % self.n_intervals)
             self.step_bootstrap_order_real(self.day_orders[moment])
 
         self.step_driver_online_offline_nodewise()
 
         self.step_remove_unfinished_orders()
 
-    def apply_manual_dispatch(self, action_tuple):
-        """
-        直接应用一个外部计算出的调度方案 (action_tuple)，并更新环境状态。
-        这个函数绕过了环境内部的 dispatch_orders 逻辑。
-
-        Args:
-            action_tuple (list): [(start_node_id, end_node_id, num_drivers), ...]
-
-        Returns:
-            float: 由本次调度产生的总 GMV。
-        """
-        total_gmv_this_step = 0.0
-
-        # 1. 首先验证调度的可行性
-        driver_counts_to_dispatch = {}
-        for start_node_id, _, num_drivers in action_tuple:
-            driver_counts_to_dispatch[start_node_id] = \
-                driver_counts_to_dispatch.get(start_node_id, 0) + num_drivers
-
-        for start_node_id, total_dispatch in driver_counts_to_dispatch.items():
-            if self.nodes[start_node_id].idle_driver_num < total_dispatch:
-                # 理论上，如果求解器输入正确，不应该发生此错误
-                raise ValueError(
-                    f"City:apply_manual_dispatch(): not a feasible dispatch. "
-                    f"Grid {start_node_id} has {self.nodes[start_node_id].idle_driver_num} drivers, "
-                    f"but trying to dispatch {total_dispatch}."
-                )
-
-        # 2. 执行调度并更新状态
-        for start_node_id, end_node_id, num_drivers in action_tuple:
-            # a. 减少源头网格的空闲司机
-            self.nodes[start_node_id].idle_driver_num -= num_drivers
-
-            # b. 匹配订单并计算 GMV
-            orders_to_serve = self.nodes[end_node_id].order_num
-            matched_orders = min(num_drivers, orders_to_serve)
-
-            if matched_orders > 0:
-                # 减少目的地网格的订单
-                self.nodes[end_node_id].order_num -= matched_orders
-
-                # 更新统计指标
-                self.episode_finished_orders += matched_orders
-
-                # 为这些匹配的订单计算并累加 GMV
-                # 我们需要从订单池中“取出”订单来获取其价值
-                gmv_from_match = 0
-                for _ in range(matched_orders):
-                    if self.nodes[end_node_id].order_pool:
-                        order = self.nodes[end_node_id].order_pool.pop(0)
-                        gmv_from_match += order.price
-
-                self.episode_reward += gmv_from_match
-                total_gmv_this_step += gmv_from_match
-
-        return total_gmv_this_step
-
     def step_stage1_with_max_flow(self, action_tuple, solver=None, return_node_gmv: bool = False):
         """
-        第 1 阶段：
-          • 若提供 estimator+stateProcessor，则调用 Agent-1 产生调度动作并实际移动司机
-          • 之后每个网格各自 simple_order_assign_real()
-        返回:
-          reward_local : float
-          pending_nodes: List[int]  — 仍有未完成订单的网格 id
+            Stage 1:
+
+            If both `estimator` and `stateProcessor` are provided, Agent-1 is called to generate dispatch actions and actually move the drivers.
+            Then each grid independently runs `simple_order_assign_real()`.
+
+            Returns:
+
+            `reward_local`: *float* — local reward obtained in this stage
+            pending_nodes`: *List\[int]* — list of grid IDs that still have uncompleted orders
+
         """
         reward_local = 0.0
         node_gmv_vec = np.zeros(self.M * self.N, dtype=np.float32)
         total_local_finished = 0
         pending_nodes = []
-        # ---------- ① (可选) 调度司机 ----------
-        if action_tuple:  # 真正移动司机
+
+
+        if action_tuple:
             save_remove_id = self.step_dispatch_invalid(action_tuple)
-            # 暂存在缓冲区，下一时间步回收
             self._dispatch_buf.extend(save_remove_id)
 
-        # -------------额外计算最大流问题------------------------
+        # -------------Additionally, compute the Linear programming problem.------------------------
         state = self.get_observation()
         driver_map = state[0]
         order_map = state[1]
@@ -1107,33 +1111,236 @@ class CityReal:
             [order_map[ids_1dto2d(grid_id, solver.M, solver.N_cols)] for grid_id in solver.valid_grid_ids])
         solution, var_map = solver.solve(drivers_t, orders_t)
 
-
-
-        print(f"[t={self.city_time:03d}] 本时段产生订单数：{len(self.day_orders[self.city_time])}")
+        print(f"[t={self.city_time:03d}] time orders: {len(self.day_orders[self.city_time])}")
         idle_drivers = self.get_num_idle_drivers()
-        print(f"[t={self.city_time:03d}] 空闲司机总数：{idle_drivers}")
-        # ---------- ② 本格子自己接单 ----------
+        print(f"[t={self.city_time:03d}] idle drivers：{idle_drivers}")
+        max_match = 0
+        # ---------- ② self grid ----------
         for node in self.nodes:
             if node is None: continue
             r_loc, _, fin = node.simple_order_assign_real(self.city_time, self)
             reward_local += r_loc
             total_local_finished += fin
+            max_match += fin
             node_gmv_vec[node.get_node_index()] += r_loc
             if node.order_num > 0:
                 pending_nodes.append(node.get_node_index())
-        print(f"== 本轮完成汇总 == local_total finished = {total_local_finished}")
+        print(f"== local_total finished = {total_local_finished}")
 
-        # ---------- ③ 保存邻居空车快照 ----------
         self.neighbor_idle_snapshot = {
             node.get_node_index(): node.idle_driver_num
             for node in self.nodes if node is not None
         }
-
-        # 第一段的reward的累加
         self.episode_reward += reward_local
-        # 第一轮完成的订单数量
         self.episode_finished_orders += total_local_finished
         if return_node_gmv:
             return reward_local, pending_nodes, node_gmv_vec,np.sum(solution)
         else:
             return reward_local, pending_nodes
+
+    def step_stage2_with_max_flow(self, pending_nodes, solver, return_node_gmv: bool = False):
+        """
+            Stage 2: Use maximum flow to complete the “neighbor borrowing” dispatch in one step.
+
+            `pending_nodes`: list of grid IDs with remaining orders after Stage 1
+            `solver`: your instance of `MaxFlowSolver(mapped_matrix_int, self.nodes)`
+
+            Returns:
+
+            If `return_node_gmv=False`: `reward_total`
+            If `return_node_gmv=True`: `(reward_total, node_gmv_vec2)`
+
+        """
+
+        reward_total = 0.0
+        node_gmv_vec2 = np.zeros(self.M * self.N, dtype=np.float32)
+        self.metrics.reset_step()
+
+        # If there are no pending orders or no idle vehicles, return immediately.
+        if not pending_nodes or not hasattr(self, "neighbor_idle_snapshot") or len(self.neighbor_idle_snapshot) == 0:
+            print("second round finished:0")
+            return (reward_total, node_gmv_vec2) if return_node_gmv else reward_total
+
+        # --- 1) Assemble `drivers_t` and `orders_t` following the order of `solver`’s `valid_grid_ids`. ---
+        num_valid = solver.num_valid_grids
+        drivers_t = np.zeros(num_valid, dtype=np.int64)
+        orders_t = np.zeros(num_valid, dtype=np.int64)
+
+        # Supply: use the snapshot of neighbor idle vehicles saved after Stage-1.
+        for gid in solver.valid_grid_ids:
+            idx = solver.grid_id_to_idx_map[gid]
+            drivers_t[idx] = int(self.neighbor_idle_snapshot.get(gid, 0))
+
+
+        # Demand: assign values only for `pending_nodes`.
+        for nid in pending_nodes:
+            j = solver.grid_id_to_idx_map.get(nid, None)
+            if j is None:
+                continue
+            orders_t[j] = int(self.nodes[nid].order_num)
+
+        print(f"orders_t:{orders_t.shape}")
+
+        total_demand_before = int(orders_t.sum())
+        print(f"total_demand_before:{total_demand_before}")
+
+        if total_demand_before == 0 or int(drivers_t.sum()) == 0:
+            print("second round finished:0")
+            return (reward_total, node_gmv_vec2) if return_node_gmv else reward_total
+
+        # --- 2) Call your max\_flow solver. ---
+        solution, var_map = solver.solve(drivers_t, orders_t)
+        if solution is None or var_map is None:
+            print("second round finished:0")
+            return (reward_total, node_gmv_vec2) if return_node_gmv else reward_total
+        # --- 3) Convert the solution vector into actual “borrow vehicle and assign order” actions. ---
+        # Note: solver's var_map looks like {(i_idx, j_idx): var_idx}
+        # For each variable, we take the floor to avoid fractional values from LP;
+        # rounding can be used instead if desired.
+
+        num_finished_orders = 0
+
+        for (i_idx, j_idx), var_idx in var_map.items():
+            amount = int(np.floor(solution[var_idx]))
+            if amount <= 0:
+                continue
+
+            src_gid = solver.valid_grid_ids[i_idx]  # Grid(s) lending vehicles.
+            dst_gid = solver.valid_grid_ids[j_idx]  # Grid(s) receiving orders (pending).
+
+            if src_gid == dst_gid:
+                continue
+
+            src_node = self.nodes[src_gid]
+            dst_node = self.nodes[dst_gid]
+            if (src_node is None) or (dst_node is None):
+                continue
+            if dst_node.order_num <= 0:
+                continue
+            if src_node.idle_driver_num <= 0:
+                continue
+
+            # Borrow `amount` drivers from `src` to fulfill `amount` orders at `dst`.
+            # This function will:
+            # Assign `assigned_time` to orders,
+            # Decrease `dst.orders`,
+            # Deduct from `src.idle_driver_num`,
+            # Accumulate GMV, etc.
+            given = min(amount, src_node.idle_driver_num, dst_node.order_num)
+            if given <= 0:
+                continue
+
+            rr = dst_node.utility_assign_orders_neighbor(self, src_node, given)
+            reward_total += rr
+            node_gmv_vec2[dst_gid] += rr
+            num_finished_orders += given
+
+        unserved = max(0, total_demand_before - num_finished_orders)
+        if unserved > 0:
+            self.metrics.add_unserved_demand(unserved)
+
+        self.episode_reward += reward_total
+        self.episode_finished_orders += num_finished_orders
+
+        return (reward_total, node_gmv_vec2) if return_node_gmv else reward_total
+
+    def step_w_o_request(self, dispatch_actions, generate_order=1): # action: [source, destination, nums]
+        info = []
+
+        '''**************************** T = 1 ****************************'''
+        # Loop over all dispatch action, change the driver distribution
+        save_remove_id = self.step_dispatch_invalid(dispatch_actions)
+        # When the drivers go to invalid grid, set them offline.
+
+        reward, reward_node = self.step_assign_order_broadcast_neighbor_reward_update_w_o_request()
+
+        '''**************************** T = 2 ****************************'''
+        # increase city time t + 1
+        self.step_increase_city_time()
+        self.step_driver_status_control()  # drivers finish order become available again.
+
+        # drivers dispatched at t, arrived at t + 1, become available at t+1
+        self.step_add_dispatched_drivers(save_remove_id)
+
+        # generate order at t + 1
+        if generate_order == 1:
+            self.step_generate_order_real()
+        else:
+            moment = self.city_time % self.n_intervals
+            moment = int(moment)
+            self.step_bootstrap_order_real(self.day_orders[moment])
+
+        # offline online control;
+        self.step_driver_online_offline_nodewise()
+        self.step_remove_unfinished_orders()
+        # get states S_{t+1}  [driver_dist, order_dist]
+        next_state = self.get_observation()
+        context = self.step_pre_order_assigin(next_state)
+        info = [reward_node, context]
+        return next_state, reward, info
+
+    def step_assign_order_broadcast_neighbor_reward_update_w_o_request(self):
+        """ Consider the orders whose destination or origin is not in the target region
+        :param num_layers:
+        :param weights_layers_neighbors: [1, 0.5, 0.25, 0.125]
+        :return:
+        """
+
+        node_reward = np.zeros((len(self.nodes)))
+        neighbor_reward = np.zeros((len(self.nodes)))
+        # First round broadcast
+        reward = 0  # R_{t+1}
+        all_order_num = 0
+        finished_order_num = 0
+
+        print(f"[t={self.city_time:03d}] time orders: {len(self.day_orders[self.city_time])}")
+        idle_drivers = self.get_num_idle_drivers()
+        print(f"[t={self.city_time:03d}] idle drivers: {idle_drivers}")
+        finished_order_num_node1 = 0
+        for node in self.nodes:
+            if node is not None:
+                reward_node, all_order_num_node, finished_order_num_node = node.simple_order_assign_real(self.city_time,
+                                                                                                         self)
+                finished_order_num_node1 += finished_order_num_node
+                reward += reward_node
+                self.episode_reward += reward_node
+                all_order_num += all_order_num_node
+                finished_order_num += finished_order_num_node
+                node_reward[node.get_node_index()] += reward_node
+
+        print(f"the first round finished:{finished_order_num_node1}")
+        self.neighbor_idle_snapshot = {
+            node.get_node_index(): node.idle_driver_num
+            for node in self.nodes if node is not None
+        }
+        self.metrics.reset_step()
+        # Second round broadcast
+        finished_order_num_node_broadcast1 = 0
+        before_order_num_node = 0
+
+        # remove the second stage request processing
+        # for node in self.nodes:
+        #     if node is not None:
+        #         if node.order_num != 0:
+        #             before_order_num_node += node.order_num
+        #             reward_node_broadcast, finished_order_num_node_broadcast \
+        #                 = node.simple_order_assign_broadcast_update(self, neighbor_reward)
+        #             finished_order_num_node_broadcast1 += finished_order_num_node_broadcast
+        #             reward += reward_node_broadcast
+        #             self.episode_reward += reward_node_broadcast
+        #             finished_order_num += finished_order_num_node_broadcast
+        # print(f"第二轮派单前订单数量:{before_order_num_node}")
+        # print(f"第二轮派单完成数量:{finished_order_num_node_broadcast1}")
+        # print(f"剩余订单数量:{before_order_num_node - finished_order_num_node_broadcast1}")
+        node_reward = node_reward + neighbor_reward
+        if all_order_num != 0:
+            self.order_response_rate = finished_order_num / float(all_order_num)
+        else:
+            self.order_response_rate = -1
+
+        self.episode_finished_orders += finished_order_num
+        sg_s, ud_s = self.metrics.same_grid_contention_step, self.metrics.unserved_demand_step
+        print(f"[metric] step {self.city_time:03d}: "
+              f"same_grid_contention={sg_s}, unserved_demand={ud_s}")
+        return reward, [node_reward, neighbor_reward]
+

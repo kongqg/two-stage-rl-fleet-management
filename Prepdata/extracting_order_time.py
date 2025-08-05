@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
 """
-构建 10-min layer 的持续时长分布  (2016-11 全月)
-------------------------------------------------
-输出: real_datasets/order_time_dist.pkl
-形状: List[float]  长度 = L_MAX (15)
-值   : ∑p_i = 1     ,  p_i = 第 i 层(=i*10min) 所占概率
+Build the duration distribution of 10-minute layers (entire November 2016)
+
+Output: `real_datasets/order_time_dist.pkl`
+Shape: `List[float]` with length = `L_MAX` (15)
+Values: ∑pᵢ = 1, where pᵢ represents the probability of layer *i* (i × 10 minutes)
+
 """
 import os, glob, tarfile, pickle, sys
 import numpy as np
@@ -18,7 +19,6 @@ L_MAX         = 9
 
 REQ_COLS = ['开始计费时间', '结束计费时间']
 
-# ── 读取 csv / tar.gz 工具 ──────────────────────────────
 def read_order_file(path: str) -> pd.DataFrame:
     if path.endswith(".csv"):
         return pd.read_csv(path, usecols=REQ_COLS)
@@ -42,13 +42,13 @@ def main():
         print(f"[{k:02d}/{len(paths)}] {os.path.basename(p)}", end=" ", flush=True)
         try:
             df = read_order_file(p)
-            # — 解析时间 —
+            # — Parse time —
             start = pd.to_datetime(df['开始计费时间'])
             end   = pd.to_datetime(df['结束计费时间'])
             duration_min = (end - start).dt.total_seconds() / 60.0
             layers = np.ceil(duration_min / TIME_INTERVAL).astype(np.int16)
 
-            # — 过滤 1…L_MAX —
+            # — Filter values in the range 1…L\_MAX. —
             mask = (layers >= 1) & (layers <= L_MAX)
             for l in layers[mask]:
                 layer_counts[l-1] += 1
@@ -62,13 +62,12 @@ def main():
 
     order_time_dist = (layer_counts / total).tolist()
 
-    # 保存
+    # save
     os.makedirs(os.path.dirname(OUTPUT_PKL), exist_ok=True)
     with open(OUTPUT_PKL, "wb") as f:
         pickle.dump(order_time_dist, f)
     print(f"\n✅ 已保存到 {OUTPUT_PKL}")
 
-    # 打印检查
     print("\nLayer | Duration |  Count |   Prob")
     for i, (cnt, p) in enumerate(zip(layer_counts, order_time_dist), start=1):
         print(f"{i:5d} | {i*TIME_INTERVAL:8d}m | {cnt:6d} | {p:7.5f}")

@@ -1,0 +1,6 @@
+model_checkpoint_path: "agent1.ckpt"
+all_model_checkpoint_paths: "..\\EP_003\\agent1.ckpt"
+all_model_checkpoint_paths: "..\\EP_004\\agent1.ckpt"
+all_model_checkpoint_paths: "..\\EP_005\\agent1.ckpt"
+all_model_checkpoint_paths: "..\\EP_006\\agent1.ckpt"
+all_model_checkpoint_paths: "agent1.ckpt"

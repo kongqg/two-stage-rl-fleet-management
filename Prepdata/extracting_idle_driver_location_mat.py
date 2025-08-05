@@ -1,15 +1,8 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-build_idle_driver_location_mat_month.py
----------------------------------------
-扫描 2016-11 全月司机轨迹 (tar.gz)，
-计算每 10-min × 网格的平均空闲司机数，
-保存为 real_datasets/idle_driver_location_mat.pkl
 
-★ 读取 mapped_matrix_int.pkl → rows, cols
-★ 自动推导 grid_size_lat / grid_size_lon
-★ 因此无需手改任何常量即可兼容 18×28＝504 格
+"""
+Scan all driver trajectories for November 2016 (tar.gz),
+calculate the average number of idle drivers per 10-minute × grid,
+and save the result as real_datasets/idle_driver_location_mat.pkl.
 """
 import os, tarfile, math, pickle, sys
 from glob import glob
@@ -31,13 +24,13 @@ latitude_range  = (30.090979,  31.437765)
 
 # ═══════════════════════════════════════════════════
 def load_grid() -> Tuple[np.ndarray, float, float]:
-    """读取映射矩阵，并返还网格角度步长"""
+    """Read the mapped matrix and return the grid angular step sizes."""
     with open(MAPPED_PKL, 'rb') as f:
         mat = pickle.load(f)
     rows, cols = mat.shape
     gs_lat = (latitude_range[1]  - latitude_range[0]) / rows
     gs_lon = (longitude_range[1] - longitude_range[0]) / cols
-    print(f"🗺  网格: {rows}×{cols}={rows*cols}, "
+    print(f" grids : {rows}×{cols}={rows*cols}, "
           f"lat_step={gs_lat:.6f}°, lon_step={gs_lon:.6f}°")
     return mat, gs_lat, gs_lon
 
@@ -55,12 +48,12 @@ def daily_idle_matrix(df: pd.DataFrame,
                       gs_lat: float,
                       gs_lon: float,
                       node2col: dict[int,int]) -> np.ndarray:
-    """单日空闲矩阵 (144, G)"""
+    """Single-day idle matrix (144, G)"""
     rows, cols = mapped.shape
     G = len(node2col)
     idle = np.zeros((144, G), int)
 
-    # 1. 时间预处理
+    # 1.    Time preprocessing
     df['gps_time'] = pd.to_datetime(df['GPS时间'])
 
     intervals = (df.groupby(['司机ID','订单ID'])['gps_time']
@@ -69,7 +62,7 @@ def daily_idle_matrix(df: pd.DataFrame,
     day0 = intervals['start'].dt.floor('D').iloc[0]
     bins = pd.date_range(day0, periods=145, freq=RESAMPLE_FREQ)
 
-    # 2. 每司机
+    # 2. each driver
     for drv_id, drv_traj in df.groupby('司机ID'):
         busy = np.zeros(144, bool)
         for _, r in intervals[intervals['司机ID']==drv_id].iterrows():

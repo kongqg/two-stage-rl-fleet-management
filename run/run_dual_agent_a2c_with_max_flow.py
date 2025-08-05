@@ -5,24 +5,26 @@ import numpy as np
 import tensorflow as tf
 import torch
 
-from run.run_max_flow_policy import MaxFlowSolver
+from run.run_Full_LP_matching import MaxFlowSolver
+from simulator.utilities import build_valid_mask_for_source
+from algorithm.neighbor_weight_a2c_agent import (
+    NeighborAgentW, NeighborStateProcessor,
+    Stage2ActorReplay, Stage2ValueReplay
+)
 
-# ───────────────────────── 项目相对路径 ─────────────────────────
 ROOT = os.path.abspath(os.path.dirname(__file__))
 sys.path.append(ROOT)
 
-
-
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"[Init] Torch device: {device}")
-# ---------- 日志目录 & 文件 ----------
-out_dir = f"dispatch_simulator/experiments/two_stage_max_flow_{time.strftime('%Y%m%d_%H-%M')}"
+# ---------- log ----------
+out_dir = f"dispatch_simulator/experiments/Ours_with_LP_Request_Upper_Bound_1040_1064"
 os.makedirs(out_dir, exist_ok=True)
 log_path = os.path.join(out_dir, "training_log.txt")
-with open(log_path, "w") as f:               # 清空
+with open(log_path, "w") as f:
     f.write("")
 
-# ============ 2. 数据加载 ============
+# ============ 2. Data Loading ============
 data_dir = "../real_datasets/"
 load = lambda name: pickle.load(open(os.path.join(data_dir, name), "rb"))
 mapped_matrix_int      = load("mapped_matrix_int.pkl")
@@ -34,26 +36,34 @@ order_real             = load("order_real.pkl")
 order_time             = load("order_time_dist.pkl")
 order_price            = load("order_price_dist.pkl")
 
-# ============ 3. 构造环境 ============
+# ============ 3. Building the environment ============
+SEED = 50 - 10
+os.environ["PYTHONHASHSEED"] = str(SEED)
+random.seed(SEED)
+np.random.seed(SEED)
+tf.compat.v1.set_random_seed(SEED)
+torch.manual_seed(SEED)
+torch.cuda.manual_seed_all(SEED)
+
 from simulator.envs import CityReal
 M, N = mapped_matrix_int.shape
 env = CityReal(mapped_matrix_int, order_num_dist,
                idle_driver_dist_time, idle_driver_location,
                order_time, order_price,
                l_max=9, M=M, N=N, n_side=6,
-               probability=1/11.0,  # 真实订单 1/11 抽样
+               probability=1/11.0,
                real_orders=order_real,
                onoff_driver_location_mat=onoff_driver_location)
 print("CityReal ready – valid grids:", env.n_valid_grids)
 
-# ============ 4. Agent‑1============
+# ============ 4. Agent‑1  ============
 from algorithm.cA2C import Estimator, stateProcessor, ReplayMemory, policyReplayMemory
 T = 144
 STATE_DIM_1 = env.n_valid_grids * 3 + T
 ACTION_DIM  = 7
 sess = tf.compat.v1.Session()
 
-# ---- 实例化 Estimator ----
+# ---- Estimator ----
 agent1 = Estimator(sess=sess,
                    action_dim=ACTION_DIM,
                    state_dim=STATE_DIM_1,
@@ -61,11 +71,11 @@ agent1 = Estimator(sess=sess,
                    scope="q_estimator")
 sess.run(tf.compat.v1.global_variables_initializer())
 
-# TensorFlow Saver（全部 q_estimator 变量）
+
 vars_agent1 = tf.compat.v1.get_collection(tf.compat.v1.GraphKeys.GLOBAL_VARIABLES, scope="q_estimator")
 saver1 = tf.compat.v1.train.Saver(var_list=vars_agent1, max_to_keep=None)
 
-# ---- 状态处理器 & 经验池 ----
+
 # target_id_states = driver_flat_ids + order_flat_ids
 id_offset = np.array(env.target_grids) + env.M * env.N
 TARGET_ID_STATES = env.target_grids + id_offset.tolist()
@@ -74,140 +84,162 @@ sp1 = stateProcessor(TARGET_ID_STATES, env.target_grids, env.n_valid_grids)
 replay1        = ReplayMemory(memory_size=100000, batch_size=3000)
 policy_replay1 = policyReplayMemory(memory_size=100000, batch_size=3000)
 
-# ============ 5. Agent‑2  (PyTorch 权重策略) ============
-from algorithm.neighbor_weight_a2c_agent import NeighborAgentW, NeighborStateProcessor, NeighborReplay
-K_NEI, HIST = 7, 3
-STATE_DIM_2 = env.n_valid_grids + env.n_valid_grids * K_NEI + 2 * HIST
 
-agent2  = NeighborAgentW(state_dim=STATE_DIM_2, action_dim=7, lr=1e-5, rho_max=2.0, device=device)
+K_NEI, HIST = 6, 3
+STATE_DIM_2 = env.n_valid_grids + 6 + 3 + env.n_valid_grids
+
+agent2  = NeighborAgentW(state_dim=STATE_DIM_2, action_dim=6, lr=1e-5, rho_max=2.0, device=device)
 sp2     = NeighborStateProcessor(env, n_neighbors=K_NEI, hist_len=HIST)
-replay2 = NeighborReplay(cap=2_00_000, batch=2048, state_dim=STATE_DIM_2)
+actor_replay2 = Stage2ActorReplay(capacity=200_000)
+value_replay2 = Stage2ValueReplay(capacity=200_000)
 
-# ============ 6. 训练超参 ============
+
 EPISODES      = 20
-EP_LEN        = 144      # 一天 144 个 10‑min slot
+EP_LEN        = 144
 GAMMA_1       = 0.90
 GAMMA_2       = 0.95
-LEARNING_RATE = 1e-3      # for Agent‑1
-UPDATES_1     = 4000      # 每日批训练步 – Agent‑1
-UPDATES_2     = 4000      # 每日批训练步 – Agent‑2
+LEARNING_RATE = 1e-3
+UPDATES_1     = 4000
+UPDATES_2     = 100
 EPS_START, EPS_END = 0.5, 0.1
-EPS_DECAY_EP       = 15    # 第 15 天衰减到 EPS_END
+EPS_DECAY_EP       = 15
 
-# ============ 7. 辅助函数 ============
+
 def eps_schedule(ep: int) -> float:
     if ep >= EPS_DECAY_EP:
         return EPS_END
     frac = (EPS_DECAY_EP - ep) / EPS_DECAY_EP
     return EPS_END + (EPS_START - EPS_END) * frac
 
-# ============ 8. 主训练循环 ============
+
+
 for ep in range(25):
 
     ep_dir = os.path.join(out_dir, f"EP_{ep:03d}")
     os.makedirs(ep_dir, exist_ok=True)
+
 
     # seed = ep + 50 - 10 # follow baseline research
     # seed = ep
     seed = ep + 1040
     random.seed(seed); np.random.seed(seed); tf.compat.v1.set_random_seed(seed); env.reset_randomseed(seed)
 
-    # --- 环境重置，一次性生成全天订单 & 初始司机分布 ---
+
     env.reset_episode_metrics(); env.metrics.reset_step()
     env.metrics.unserved_demand_total = 0;env.metrics.same_grid_contention_total = 0
     curr_state = env.reset_clean(generate_order=1, ratio=0.40, city_time=0)  # ndarray (2,M,N)
-    # ---- Agent‑1 ----
-    info0     = env.step_pre_order_assigin(curr_state)
-    context_1 = sp1.compute_context(info0)
-    s1_conv   = sp1.utility_conver_states(curr_state)
-    s1_norm   = sp1.utility_normalize_states(s1_conv)
-    s1_grid   = sp1.to_grid_states(s1_norm, env.city_time)
 
-    # ---- buffer for Agent‑1 上一个时间步 ----
-    prev_s_grid, prev_valid_prob, prev_policy_state = None, None, None
-    prev_action_mat = None
-    prev_curr_state_value, prev_next_state_ids = None, None
+    info = env.step_pre_order_assigin(curr_state)
+    context = sp1.compute_context(info)
+    curr_s = sp1.utility_conver_states(curr_state)
+    normalized_curr_s = sp1.utility_normalize_states(curr_s)
+    # 形状 (G, 3G+T)
+    s_grid = sp1.to_grid_states(normalized_curr_s, env.city_time)  # t0, s0
 
-    # ---- Agent‑2 历史缓存 ----
+
     sp2._hist.clear()
 
     eps_cur = eps_schedule(ep)
 
-    # 计算最大流问题
+    # Solve the Linear Programming problem.
     max_flow_orders = 0
     solver = MaxFlowSolver(mapped_matrix_int, env.nodes)
     print(f"\n========== Episode {ep:02d} / ε = {eps_cur:.3f} ==========")
     for t in range(EP_LEN):
 
         (action_tuple,
-         valid_prob_mat,
-         policy_state_1,
-         action_onehot,
+         valid_action_prob_mat,
+         policy_state,
+         action_choosen_mat,
          curr_state_value,
-         neigh_mask,
-         next_state_ids) = agent1.action(s1_grid, context_1, eps_cur)
+         curr_neighbor_mask,
+         next_state_ids) = agent1.action(s_grid, context, eps_cur)
 
         # max flow step
         gmv1, pending_nodes, gmv_vec1,time_step_max_matching = env.step_stage1_with_max_flow(action_tuple, solver,return_node_gmv=True)
 
         max_flow_orders += time_step_max_matching
-        # cache1 = agent1._cache
-        # ───── Stage‑2：若有缺口，Agent‑2 输出权重矩阵─────
         if pending_nodes:
-            # 构造 Agent‑2 的全局状态
-            remain_vec = np.zeros(env.n_valid_grids, np.float32)
-            for nid in pending_nodes:
-                remain_vec[env.target_grids.index(nid)] = env.nodes[nid].order_num
-            s2_global = sp2.get_state(remain_vec, env.neighbor_idle_snapshot, env.metrics.get_step())
-            # 对每个待补单网格生成一行 w
-            w_rows = []
-            for _ in pending_nodes:
-                w_row = agent2.action(s2_global, eps=eps_cur)
-                w_rows.append(w_row)
-            w_mat = np.vstack(w_rows)
-            gmv2, gmv_vec2  = env.step_stage2_weight_plus(pending_nodes, w_mat,return_node_gmv=True)
-            # Agent‑2 Replay  (奖励 = ΔGMV)
-            s2_next = sp2.get_state(np.zeros_like(remain_vec), env.neighbor_idle_snapshot, env.metrics.get_step())
-            for w_row in w_rows:
-                replay2.add(s2_global, w_row, gmv2, s2_next)
+            remain_vec = np.array(
+                [env.nodes[g].order_num for g in env.target_grids],  # 长度 = env.n_valid_grids
+                dtype=np.float32
+            )
+            w_rows, traces = [], {}
+            for s_id in pending_nodes:
+                s_id_node = env.nodes[s_id]
+                s2_s = sp2.get_state_for_source(
+                    s_id_node,
+                    remain_vec,
+                    env.neighbor_idle_snapshot,
+                    env.metrics.unserved_demand_step
+                )  # 504 + 6 + 3 + 504 = 1020
+                # 6, 6, 6
+                mask_s, neigh_ids, idle_vec = build_valid_mask_for_source(env, s_id_node, require_has_idle=True)
+                prob_s, order_s = agent2.action(s2_s, mask_s, eps=eps_cur, select='argmax')
+                w_rows.append(prob_s.astype(np.float32))
+
+                traces[s_id] = {
+                    "state": s2_s.astype(np.float32),
+                    "mask0": mask_s.astype(np.int64),
+                    "neigh_ids": neigh_ids,
+                    "order": order_s
+                }
+            w_mat = np.vstack(w_rows).astype(np.float32)
+            gmv2, gmv_vec2, exec_traces, p_next = env.step_stage2_weight_plus(
+                pending_nodes,
+                w_mat,
+                return_node_gmv=True,
+                return_traces=True,
+                return_next_state=True
+            )
+            for s_id in pending_nodes:
+                r_s = float(gmv_vec2[s_id]) / 5000.0
+                s_id_node = env.nodes[s_id]
+                idle_after = {nid: env.nodes[nid].idle_driver_num for nid in env.target_grids}
+                s2_next_s = sp2.get_state_for_source(
+                    s_id_node,
+                    p_next,
+                    idle_after,
+                    env.metrics.unserved_demand_step
+                )
+                attempts = exec_traces[s_id]["attempts"]  # [j1, j2, ...] 0..5
+                masks_seq = exec_traces[s_id]["masks"]  # [mask6_at_t, ...]
+                actor_replay2.add(traces[s_id]["state"], attempts, masks_seq, r_s, s2_next_s)
+                value_replay2.add(traces[s_id]["state"], r_s, s2_next_s)
         else:
             gmv2 = 0.0
+        neighbor_reward = np.zeros((len(env.nodes)))
         gmv_total = gmv1 + gmv2
-        # ───── 时间推进到 t+1 ─────
-        env.step_increase_city_time(); env.step_finish_interval(True)
+        env.step_increase_city_time();
+        env.step_finish_interval(True)
         next_state = env.get_observation()
+        context1 = env.step_pre_order_assigin(next_state)
+        node_gmv = gmv_vec1 + neighbor_reward
+        info_reward = ([node_gmv, neighbor_reward], context1)
+        immediate_reward = sp1.reward_wrapper(info_reward, curr_s)
 
-        # ───── Agent‑1 经验池写入 & 目标/优势计算 ─────
-        # 构造均匀 node_reward 近似 (reward_local / G)
-        node_gmv = gmv_vec1 + gmv_vec2
-        info_reward = ([node_gmv], None)
-        # r_grid     = sp1.to_grid_rewards(reward_vec)
-        immediate_reward = sp1.reward_wrapper(info_reward, s1_conv)
-
-        if prev_s_grid is not None:
+        if t != 0:
             r_grid = sp1.to_grid_rewards(immediate_reward)
             # TD‑Target
-            targets_batch = agent1.compute_targets(prev_valid_prob, s1_grid, r_grid, GAMMA_1)
-            adv_batch     = agent1.compute_advantage(prev_curr_state_value, prev_next_state_ids, s1_grid, r_grid, GAMMA_1)
-            replay1.add(prev_s_grid, prev_action_mat, targets_batch, s1_grid)
-            policy_replay1.add(prev_policy_state, prev_action_onehot, adv_batch, prev_neigh_mask)
+            targets_batch = agent1.compute_targets(action_mat_prev, s_grid, r_grid, GAMMA_1)
+            advantage = agent1.compute_advantage(curr_state_value_prev, next_state_ids_prev, s_grid, r_grid, GAMMA_1)
+            replay1.add(state_mat_prev, action_mat_prev, targets_batch, s_grid)
+            policy_replay1.add(policy_state_prev, action_choosen_mat_prev, advantage, curr_neighbor_mask_prev)
 
-        # 更新 Agent‑1上一时刻缓存
-        prev_s_grid = s1_grid
-        prev_valid_prob = valid_prob_mat
-        prev_policy_state = policy_state_1
-        prev_action_mat = valid_prob_mat  # ← 如果 Critic replay 还想存 G×7，可保留
-        prev_curr_state_value, prev_next_state_ids = curr_state_value, next_state_ids
-        prev_action_onehot = action_onehot
-        prev_neigh_mask = neigh_mask
+        state_mat_prev = s_grid
+        action_mat_prev = valid_action_prob_mat
 
-        # ---- 切换到 t+1 全局状态 (Agent‑1) ----
-        s1_conv   = sp1.utility_conver_states(next_state)
-        s1_norm   = sp1.utility_normalize_states(s1_conv)
-        s1_grid   = sp1.to_grid_states(s1_norm, env.city_time)
-        context_1 = sp1.compute_context(env.step_pre_order_assigin(next_state))
+        action_choosen_mat_prev = action_choosen_mat
+        curr_neighbor_mask_prev = curr_neighbor_mask
+        policy_state_prev = policy_state
+        curr_state_value_prev = curr_state_value
+        next_state_ids_prev = next_state_ids
 
-    # ==== 日志 ====
+        curr_state = next_state
+        curr_s = sp1.utility_conver_states(next_state)
+        normalized_curr_s = sp1.utility_normalize_states(curr_s)
+        s_grid = sp1.to_grid_states(normalized_curr_s, env.city_time)  # t0, s0
+        context = sp1.compute_context(context1)
     sg_total, ud_total = env.metrics.get_total()
     log_str = (f"[EP {ep:03d}] "
                f"reward={env.episode_reward} "
@@ -220,7 +252,6 @@ for ep in range(25):
     with open(log_path, "a") as f:
         f.write(log_str + "\n")
 
-    # ==== End‑of‑Episode：批量更新两套网络 ====
     # Agent‑1 (value)
     if replay1.curr_lens:
         for _ in range(UPDATES_1):
@@ -233,15 +264,25 @@ for ep in range(25):
             agent1.update_policy(bs, adv.reshape([-1,1]), ba, mask, LEARNING_RATE, _)
     global_step = 0
     # # Agent‑2
-    if replay2.size >= replay2.batch:
-        for _ in range(UPDATES_2):
-            batch = replay2.sample()
-            agent2.update(*batch, gamma=GAMMA_2)
+    global_step = 0
+    print("Agent2 value start training")
+    val_hist = []
+    if len(value_replay2) > 0:
+        for u in range(UPDATES_2):
+            vs, vr, vns = value_replay2.sample(batch_size=256)
+            loss = agent2.update_value(vs, vr, vns, gamma=GAMMA_2)
 
-        # ============ 保存模型 ============
+    print("Agent2 policy start training")
+    pol_hist = {"loss": [], "nll": [], "ent": [], "adv": [], "pos": [], "len": [], "grad": []}
+    if len(actor_replay2) > 0:
+        for u in range(UPDATES_2):
+            s, attempts, masks, r, ns = actor_replay2.sample(batch_size=256)
+            loss = agent2.update_policy(s, attempts, masks, r, ns, gamma=GAMMA_2, beta=0.01)
+
+
     saver1.save(sess, os.path.join(ep_dir, "agent1.ckpt"))
     torch.save(agent2.actor.state_dict(),  os.path.join(out_dir, f"actor_ep{ep}.pth"))
     torch.save(agent2.critic.state_dict(), os.path.join(out_dir, f"critic_ep{ep}.pth"))
 
 
-print("Training finished ✅")
+print("Training finished")

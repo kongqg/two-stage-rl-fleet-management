@@ -1,3 +1,5 @@
+import sys
+
 import numpy as np
 import os
 import errno
@@ -199,6 +201,58 @@ def debug_print_drivers(node):
         else:
             node_id = "none"
         print("|{:12}|{:12}|{:12}|{:12}|".format(driver_id, node_id, cur_drivers.online, cur_drivers.onservice))
+
+def build_valid_mask_for_source(env, s_node_id, require_has_idle=True):
+    """
+        Construct the mask for the initial candidate set R_{s,0} in Stage-2,
+            strictly aligned with the 6 positions of the weight vector w.
+
+            Args:
+                env: Your City/Env instance (should have attributes like target_grids,
+                     valid_neighbor_node_id, nodes, etc.)
+                s_id: Global node ID of the source grid (index aligned with env.nodes)
+                require_has_idle (bool):
+                    - True: mark neighbors with idle vehicles as 1;
+                    - False: only geographical reachability (illegal=-1 → 0, others → 1).
+
+            Returns:
+                mask     : np.ndarray of shape (6,), dtype=int64 — binary mask (0/1)
+                neigh_ids: list[int] of length 6 — neighbor node IDs aligned with mask/w
+                           (illegal positions marked as -1)
+                idle_vec : np.ndarray of shape (6,), dtype=int64 — idle vehicle counts per neighbor
+                           (illegal positions marked as 0)
+    """
+    # 1) Fetch the 6 neighbor IDs ordered consistently with the weight vector.
+    neighs_id = [neigh.get_node_index() for neigh in s_node_id.neighbors if neigh is not None]
+    neigh_ids = neighs_id[:6]
+    if len(neigh_ids) < 6:
+        neigh_ids.extend([-1] * (6 - len(a)))
+    else:
+        neigh_ids = neigh_ids[:6]
+    # 2) Calculate idle vehicles and mask.
+    mask = np.zeros(6, dtype=np.int64)
+    idle_vec = np.zeros(6, dtype=np.int64)
+
+    n_nodes = len(env.nodes)
+    for j, nid in enumerate(neigh_ids):
+        if nid is None or nid == -1:
+            mask[j] = 0
+            idle_vec[j] = 0
+            continue
+        if not (0 <= nid < n_nodes) or env.nodes[nid] is None:
+            mask[j] = 0
+            idle_vec[j] = 0
+            continue
+
+        avail = env.nodes[nid].get_driver_numbers()
+        idle_vec[j] = avail
+
+        if require_has_idle:
+            mask[j] = 1 if avail > 0 else 0
+        else:
+            mask[j] = 1
+
+    return mask, neigh_ids, idle_vec
 
 
 

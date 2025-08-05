@@ -168,4 +168,4 @@ source/main.pdf
 .dropbox
 
 # Ignore datasets folder
-real_datasets/order_real.pkl
+/real_datasets/order_real.pkl
